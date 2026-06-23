@@ -1,0 +1,40 @@
+<!-- control_presets.html -->
+<div class="section open">
+  <h2 onclick="this.parentElement.classList.toggle('open')">Presets</h2>
+  <div class="controls">
+    <div class="control">
+      <label for="presetSelect">Load Preset</label>
+      <select id="presetSelect" onchange="loadPreset(this.value)">
+        <option value="">-- Select a preset --</option>
+        <option value="relax">Relax</option>
+        <option value="party">Party</option>
+        <option value="focus">Focus</option>
+      </select>
+    </div>
+    <div class="control">
+      <label for="presetName">Save Current as Preset</label>
+      <input type="text" id="presetName" placeholder="Enter preset name">
+      <button onclick="savePreset()">Save</button>
+    </div>
+  </div>
+</div>
+<script>
+  function loadPreset(name) {
+    if (!name) return;
+    fetch("/load_preset", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "name=" + encodeURIComponent(name)
+    });
+  }
+
+  function savePreset() {
+    const name = document.getElementById("presetName").value;
+    if (!name) return alert("Enter a name first.");
+    fetch("/save_preset", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "name=" + encodeURIComponent(name)
+    });
+  }
+</script>

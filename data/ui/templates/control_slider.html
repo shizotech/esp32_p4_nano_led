@@ -1,0 +1,5 @@
+<div class="control">
+  <label for="{{id}}">{{name}}: <span id="{{id}}Value">{{value}}</span></label>
+  <input type="range" id="{{id}}" min="{{min}}" max="{{max}}" value="{{value}}"
+         oninput="updateSliderValue(this); sendUpdate('{{id}}', this.value)">
+</div>

@@ -1,0 +1,287 @@
+using std;
+
+print("BOOTSCRIPT V1.1");
+print("TODO: Implement auto-download from internet for LED app!");
+
+server = esp32.webserver();
+config_update = 0;
+
+class web_page
+{
+  html = "";
+
+  __init__() {
+    html += render_templ("page_start");
+  }
+
+  get()
+  {
+    final_html = html;
+    if(!closed_last_section)
+			final_html += render_templ("section_end");
+    final_html += render_templ("page_end");
+    return final_html;
+  }
+
+  add_section(title, infotext = "")
+	{
+		if(!closed_last_section)
+			html += render_templ("section_end");
+    closed_last_section = 1;
+		if(!title.empty())
+			html += render_templ("section_start", [section_title = title, section_text=infotext]);
+			closed_last_section = 0;
+	}
+
+  add_ctrl(type, name, cb, options)
+  {
+    id = get_id(name);
+    
+    options.id = id;
+    options.name = name;
+    
+    str = render_templ("control_" + type, options);	
+    
+    server.post("/"+id, [this, cb](post_data)
+    {
+      cb(post_data);
+      return "success";
+    });
+    
+    html += str;
+  }
+
+  add_slider(name, cb, minv, maxv, defaultv)
+  {
+    options = [min=minv, max=maxv, value=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.value = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id, post_data.value);
+	  esp32.set_config(id, post_data.value);
+      config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+    
+    add_ctrl("slider", name, cb2, options);
+  }
+
+  add_text(name, cb, defaultv)
+  {
+    options = [value=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.value = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id, post_data.value);
+      esp32.set_config(id, post_data.value);
+      config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+    
+    add_ctrl("text", name, cb2, options);
+  }
+
+  add_checkbox(name, cb, defaultv)
+  {
+    options = [checked=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.checked = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id, post_data.value);
+      esp32.set_config(id, post_data.value);
+      config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+
+    //'checked' html attribute
+		if(options.checked)
+			options.checked = "checked";
+		else
+			options.checked = "";
+    
+    add_ctrl("checkbox", name, cb2, options);
+  }
+
+  get_id(name)
+  {
+    id = name.lowercase();
+    id = id.removecharsexcept("abcdefghijklmnopqrstuvwqyz0123456789");
+    return id;
+  }
+
+  render(src, args = 0) {
+    if(!args)
+      return src;
+    for(i = 0; i < args.size(); i++) {
+      src = src.replace("{{"+args.key(i)+"}}", args[i]);
+    }
+    return src;
+  }
+
+  render_templ(alias, args = 0)
+  {
+    return render(&esp32.web_template(alias), &args);
+  }
+
+   closed_last_section = 1;
+}
+
+class web_menu
+{
+  header_buttons = [
+    "SETTINGS" = "/",
+  ];
+
+  __init__() {
+    on("/", [this]()
+    {
+		page = web_page();
+		page.add_section("Please connect the ESP to the internet and then reboot");
+		page.add_section("Network", "Network settings");
+		page.add_text("Name", 0, "ESP32");
+		page.add_text("Password", 0, "admin");
+		page.add_text("IP", 0, "2.0.0.10");
+		page.add_text("Gateway", 0, "2.0.0.1");
+		page.add_text("Netmask", 0, "255.255.255.0");
+		page.add_checkbox("DHCP Server", 0, 0);
+
+		page.add_section("Connect to WLANs");
+
+		wlans = esp32.config("wlans");
+		
+		if(!wlans)
+			wlans = [];
+
+		wlans.resize(6);
+
+		add_wlan_option = [page, &wlans](numid)
+		{
+			def_ssid = wlans[numid].ssid;
+			if(!def_ssid)
+				def_ssid = "";
+			def_pw = wlans[numid].password;
+			if(!def_pw)
+				def_pw = "";
+			
+			page.add_text("WLAN " + (numid+1) + " Name", [numid](post_data)
+			{
+				print("updating: wlan" + numid);
+				wlans = esp32.config("wlans");
+				
+				if(!wlans)
+					wlans = [];		
+				if(numid >= wlans.size())
+					wlans.resize(numid+1);
+				
+				wlans[numid].ssid = post_data.value;
+				esp32.set_config("wlans", wlans);
+				config_update = 1;
+			}, def_ssid);
+			
+			page.add_text("WLAN " + (numid+1) + " Password", [numid](post_data)
+			{
+				print("updating: wlan" + numid);
+				wlans = esp32.config("wlans");
+				
+				if(!wlans)
+					wlans = [];		
+				if(numid >= wlans.size())
+					wlans.resize(numid+1);
+				
+				wlans[numid].password = post_data.value;
+				esp32.set_config("wlans", wlans);
+				config_update = 1;
+			}, def_pw);
+		};
+		
+
+		for(i = 0; i < wlans.size(); i++)
+		{
+			add_wlan_option(i);
+		}
+	  
+		return page.get();
+    });
+  }
+
+  on(url, cb) {
+    server.on(url, [cb]()
+    {
+      return cb();
+    });
+  }
+
+	on_json(url, cb)
+	{
+		server.post_json(url, [this, cb](post_data)
+		{
+			return cb(post_data);
+		});
+	}
+	
+	on_post(url, cb)
+	{
+		server.post(url, [this, cb](post_data)
+		{
+			return cb(post_data);
+		});
+	}
+
+  render(src, args) {
+    if(!args)
+      return src;
+    for(i = 0; i < args.size(); i++) {
+      src = src.replace("{{"+args.key(i)+"}}", args[i]);
+    }
+    return src;
+  }
+
+  render_templ(alias, args)
+  {
+    return render(&esp32.web_template(alias), &args);
+  }
+}
+
+menu = web_menu();
+
+update_config_thread()
+{
+	for(1)
+	{
+		//This is to relax saving on update spam...
+		if(config_update)
+		{
+			sleep(500);
+			fileio.write_string("/config.json", esp32.config());
+			print(esp32.config());
+			config_update = 0;
+		}
+		sleep(100);
+	}
+}
+
+config_thread = std.thread(update_config_thread);
+config_thread.run();
+
+server.start();

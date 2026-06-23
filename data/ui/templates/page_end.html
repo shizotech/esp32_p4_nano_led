@@ -1,0 +1,42 @@
+</div>
+<script>
+const updateQueue = {};  // Stores pending values per control
+const isSending = {};    // Flags active requests
+
+function updateSliderValue(slider) {
+	const display = document.getElementById(slider.id + "Value");
+	if (display) display.textContent = slider.value;
+}
+
+function sendUpdate(id, value) {
+	updateQueue[id] = value;
+	processUpdate(id);
+}
+
+function processUpdate(id) {
+	if (isSending[id]) return;  // Already sending
+
+	const value = updateQueue[id];
+	if (value === undefined) return;  // Nothing to send
+
+	isSending[id] = true;
+	fetch("/" + id, {
+	  method: "POST",
+	  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+	  body: "value=" + encodeURIComponent(value)
+	}).then(() => {
+	  isSending[id] = false;
+	  if (updateQueue[id] !== value) {
+		// A newer value was queued — send that now
+		processUpdate(id);
+	  } else {
+		delete updateQueue[id];  // Clear queue
+	  }
+	}).catch(err => {
+	  console.error("Update failed for", id, err);
+	  isSending[id] = false;
+	});
+}
+</script>
+</body>
+</html>

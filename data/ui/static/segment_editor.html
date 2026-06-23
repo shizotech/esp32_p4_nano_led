@@ -1,0 +1,519 @@
+
+<div class="section open">
+<h2>Artnet Map</h2>
+<div id="artnet-map" style="display:flex; gap:2px; flex-wrap: wrap;"></div>
+</div>
+
+<div class="section open">
+<h2>LED Segment Editor</h2>
+<div class="controls">
+  <button onclick="saveConfig()">💾 Save Config</button>
+  <button onclick="document.getElementById('configFile').click()">📂 Load Config</button>
+  <input type="file" id="configFile" style="display:none" accept=".json" onchange="loadConfig(event)">
+  <div id="outputs"></div>
+  <button onclick="addOutput()">+ Add Output</button>
+</div>
+</div>
+
+<style>
+  .segment-card {
+    background: var(--input-bg);
+    border: 1px solid var(--neon-blue);
+    border-radius: 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 0 8px rgba(0,255,255,0.3);
+  }
+  .segment-header {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--neon-blue);
+    gap: 0.5rem;
+  }
+  .drag-handle {
+    cursor: grab;
+    font-size: 1.2rem;
+    color: var(--neon-dim);
+    flex-shrink: 0;
+  }
+  .segment-header input[type="text"] {
+    flex: 1;
+    padding: 0.3rem;
+    border: 1px solid var(--neon-blue);
+    border-radius: 6px;
+    background: var(--input-bg);
+  }
+  .delete-btn {
+    background: crimson;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 0.3rem;
+    cursor: pointer;
+    box-shadow: 0 0 5px crimson;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .segment-body {
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .flags {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .flags label {
+    font-size: 0.9rem;
+    color: var(--neon-dim);
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+  .output {
+	  background: var(--input-bg);
+	  border: 1px solid var(--neon-blue);
+	  border-radius: 12px;
+	  padding: 0.5rem;
+	  margin-bottom: 1rem;
+	  box-shadow: 0 0 8px rgba(0,255,255,0.2);
+	}
+  
+</style>
+
+<style>
+  /* optional: prevents iOS from interpreting drag handle gestures as scroll */
+  .drag-handle { touch-action: none; }
+</style>
+
+<script>
+
+const CHANNELS_PER_UNIVERSE = 512; // Art-Net max channels per universe
+const BYTES_PER_LED = 3;           // RGB
+
+
+let outputs = [];
+
+/* Call this right after you create each segCard in renderOutputs() */
+function wireDrag(segCard, oi, si) {
+  const handle = segCard.querySelector('.drag-handle');
+
+  // Arm-only-on-handle: card is NOT draggable unless the handle was pressed
+  const arm = () => {
+    segCard.setAttribute('draggable', 'true');
+    segCard.dataset.dragArmed = '1';
+  };
+  const disarm = () => {
+    segCard.removeAttribute('draggable');
+    delete segCard.dataset.dragArmed;
+  };
+
+  handle.addEventListener('pointerdown', (e) => {
+    arm();
+    // avoid selecting text when starting a drag
+    e.preventDefault();
+  });
+
+  // If user taps without actually dragging, clean up
+  document.addEventListener('pointerup', disarm, { passive: true });
+
+  segCard.addEventListener('dragstart', (e) => {
+    // If not armed by handle, cancel
+    if (!segCard.dataset.dragArmed) {
+      e.preventDefault();
+      return;
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', JSON.stringify({ oi, si }));
+    segCard.classList.add('dragging');
+  });
+
+  segCard.addEventListener('dragend', () => {
+    segCard.classList.remove('dragging');
+    disarm();
+  });
+
+  // Allow dropping on any segment card in the same output
+  segCard.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  });
+
+  segCard.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const data = JSON.parse(e.dataTransfer.getData('text/plain') || '{}');
+    if (data.oi !== oi) return; // only within same output
+
+    const from = data.si;
+    const toCard = segCard;
+    const to = parseInt(toCard.dataset.segmentIndex, 10);
+
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
+
+    const segs = outputs[oi].segments;
+    const moved = segs.splice(from, 1)[0];
+
+    // Insert BEFORE the drop target (classic behavior).
+    // If moving down (from < to), the target index shifts left by 1 after removal.
+    let insertAt = to;
+    if (from < to) insertAt = to - 1;
+
+    segs.splice(insertAt, 0, moved);
+
+    renderOutputs(); // re-render to refresh dataset indices
+    // (your JSON POST stays wherever you already do it)
+  });
+}
+
+function addOutput() {
+  outputs.push({
+    name: "Output",
+    pin: 0,
+    segments: []
+  });
+  renderOutputs();
+}
+
+function addSegment(outputIndex) {
+  const segs = outputs[outputIndex].segments;
+  
+  let newSeg;
+  if (segs.length > 0) {
+    // clone last segment
+    const last = segs[segs.length - 1];
+    newSeg = { ...last }; // shallow copy all fields
+  } else {
+    // default template
+    newSeg = {
+      name: "Segment",
+      group: "Default",
+      width: 10,
+      height: 1,
+      count: 1,
+      color: "#000000",
+      brightness: 255,
+      enabled: true,
+      reverse: false,
+      mirror: false
+    };
+  }
+
+  segs.push(newSeg);
+  renderOutputs();
+}
+
+function deleteSegment(outputIndex, segmentIndex) {
+  outputs[outputIndex].segments.splice(segmentIndex, 1);
+  renderOutputs();
+}
+
+function deleteOutput(outputIndex) {
+  outputs.splice(outputIndex, 1);
+  renderOutputs();
+}
+
+function initOutputs() {
+  fetch('/segments_get', { method: 'POST' })
+    .then(res => {
+      if (!res.ok) throw new Error("Failed to get segments");
+      return res.json(); // ESP should return the array directly
+    })
+    .then(data => {
+      outputs = Array.isArray(data) ? data : [];
+      renderOutputs(false); // render without sending back immediately
+    })
+    .catch(err => {
+      console.error("Error fetching segments from ESP:", err);
+      outputs = [];
+      renderOutputs(false);
+    });
+}
+
+document.addEventListener("DOMContentLoaded", initOutputs);
+
+function renderArtnetMap() {
+    const map = document.getElementById("artnet-map");
+    map.innerHTML = "";
+
+	let universeIndex = 0;
+
+    outputs.forEach((output, oi) => {
+	
+		let offset = 0;
+		output.totalBytes = 0;
+
+		// store segment ranges in bytes for visualization
+		output.segmentRanges = output.segments.map((seg,si) => {
+			const segBytes = seg.width * seg.height * seg.count * BYTES_PER_LED;
+			const range = { start: offset, end: offset + segBytes - 1, name: seg.name, sid: si };
+			offset += segBytes;
+			return range;
+		});
+
+		output.totalBytes = offset;
+		output.universes = Math.floor(output.totalBytes / CHANNELS_PER_UNIVERSE)+1;
+		
+	
+        let remainingBytes = output.totalBytes;
+        let byteOffset = 0;
+
+        while (remainingBytes > 0) {
+            const bytesThisUniverse = Math.min(remainingBytes, CHANNELS_PER_UNIVERSE);
+
+            // Universe container
+            const universeDiv = document.createElement("div");
+            universeDiv.style.display = "flex";
+            universeDiv.style.flexDirection = "row";
+            universeDiv.style.position = "relative"; // for inner text
+            universeDiv.style.width = Math.floor(100.0 / output.universes - 1.0) + "%";
+            universeDiv.style.height = "45px";
+            universeDiv.style.border = "rgb(66 66 66) dashed 2px";
+            universeDiv.title = `Output ${oi + 1}, Universe ${universeIndex}, Bytes ${bytesThisUniverse}`;
+			
+            // Universe label
+            const label = document.createElement("div");
+            label.textContent = `UNI${universeIndex}`;
+            label.style.position = "absolute";
+            label.style.left = "50%";
+            label.style.top = "25%";
+            label.style.transform = "translate(-50%, -50%)";
+            label.style.fontSize = "20px";
+            label.style.color = "#fff";
+            label.style.pointerEvents = "none"; // so it doesn't block hover
+            universeDiv.appendChild(label);
+
+            // Fill universe with segments
+            output.segmentRanges.forEach(seg => {
+                const segStart = seg.start;
+                const segEnd = seg.end;
+                const uniStart = byteOffset;
+                const uniEnd = byteOffset + bytesThisUniverse - 1;
+
+                const overlapStart = Math.max(segStart, uniStart);
+                const overlapEnd = Math.min(segEnd, uniEnd);
+
+                if (overlapEnd >= overlapStart) {
+					let dispStart = overlapStart + 1;
+					let numLeds = (overlapEnd - overlapStart) / BYTES_PER_LED;
+					if(overlapStart == segStart)
+					{
+						numLeds = (segEnd - segStart) / BYTES_PER_LED;
+					}
+					while(dispStart >= 512)
+					{
+						dispStart -= 512;
+					}
+                    const segDiv = document.createElement("div");
+                    const widthPercent = (overlapEnd - overlapStart + 1) / bytesThisUniverse * 100;
+                    segDiv.style.width = widthPercent + "%";
+                    segDiv.style.backgroundColor = `hsl(${((seg.start)*879843) % 360}, 80%, ${40}%)`;
+                    segDiv.title = seg.name;
+					segDiv.textContent = "(CH" + dispStart + "|" + Math.round(numLeds) + "LEDs) " + seg.name;
+					segDiv.style.fontSize = "15px";
+					segDiv.style.display = "flex";
+					segDiv.style.alignItems = "flex-end"; // push text to bottom
+					// Prevent wrapping / pushing up
+					segDiv.style.whiteSpace = "nowrap";
+					segDiv.style.overflow = "hidden";
+					//segDiv.style.textOverflow = "ellipsis"; // optional "..."
+					//segDiv.style.justifyContent = "center"; // center horizontally
+                    universeDiv.appendChild(segDiv);
+                }
+            });
+
+            map.appendChild(universeDiv);
+            remainingBytes -= bytesThisUniverse;
+            byteOffset += bytesThisUniverse;
+            universeIndex++;
+        }
+    });
+}
+
+let sending = false;
+let sendPending = false;
+
+function sendToESP() {
+  
+  if (sending) {
+    sendPending = true; // mark that we need to send again
+    return;
+  }
+  
+  renderArtnetMap();
+
+  sending = true;
+  fetch('/segments_update', { // replace with your ESP endpoint
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(outputs)
+  })
+  .then(res => {
+    if (!res.ok) throw new Error("ESP update failed: " + res.status);
+    return res.text();
+  })
+  .then(txt => console.log("ESP responded:", txt))
+  .catch(err => console.error("Error sending to ESP:", err))
+  .finally(() => {
+    sending = false;
+    if (sendPending) {
+      sendPending = false;
+      sendToESP(); // send latest state once more
+    }
+  });
+}
+
+
+function attachChangeHandler(input, callback) {
+  const eventType = (input.type === "checkbox" || input.type === "radio") ? "change" : "input";
+  input.addEventListener(eventType, callback);
+}
+
+function renderOutputs() {
+  const outputsDiv = document.getElementById("outputs");
+  outputsDiv.innerHTML = "";
+  outputs.forEach((output, oi) => {
+    const outputDiv = document.createElement("div");
+    outputDiv.className = "output";	
+	outputDiv.innerHTML = `
+	  <div class="output-header" style="display:flex; gap:1rem; align-items:center; margin-bottom:0.5rem;">
+		<label style="flex:1;">
+		  Name:
+		  <input type="text" value="${output.name}" 
+			oninput="outputs[${oi}].name=this.value">
+		</label>
+		<label style="width:100px;">
+		  Pin:
+		  <input type="number" min="0" value="${output.pin}" 
+			oninput="outputs[${oi}].pin=parseInt(this.value);sendToESP();">
+		</label>
+		<button class="delete-btn" onclick="deleteOutput(${oi})">✖</button>
+	  </div>
+	`;
+	
+    output.segments.forEach((seg, si) => {
+      const segCard = document.createElement("div");
+      segCard.className = "segment-card";
+      segCard.draggable = true;
+      segCard.dataset.outputIndex = oi;
+      segCard.dataset.segmentIndex = si;
+
+      segCard.innerHTML = `
+        <div class="segment-header">
+          <span class="drag-handle">☰</span>
+          <input type="text" value="${seg.name}" oninput="outputs[${oi}].segments[${si}].name=this.value">
+          <button class="delete-btn" onclick="deleteSegment(${oi},${si})">✖</button>
+        </div>
+        <div class="segment-body">
+          <div class="flags">
+            <label><input type="checkbox" ${seg.enabled ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].enabled=this.checked">Enabled</label>
+            <label><input type="checkbox" ${seg.reverse ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].reverse=this.checked">Reverse</label>
+            <label><input type="checkbox" ${seg.mirror ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].mirror=this.checked">Mirror</label>
+			<label><input type="checkbox" ${seg.testout ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].testout=this.checked">Test Output</label>
+          </div>
+          <label>Width: <input type="number" value="${seg.width}" min="1" oninput="outputs[${oi}].segments[${si}].width=parseInt(this.value)"></label>
+          <label>Height: <input type="number" value="${seg.height}" min="1" oninput="outputs[${oi}].segments[${si}].height=parseInt(this.value)"></label>         
+		  <label>Count: <input type="number" value="${seg.count}" min="1" oninput="outputs[${oi}].segments[${si}].count=parseInt(this.value)"></label>
+          <label>Brightness: <input type="range" min="0" max="255" value="${seg.brightness}" oninput="outputs[${oi}].segments[${si}].brightness=parseInt(this.value)"></label>
+          <label>Color: <input type="color" value="${seg.color}" oninput="outputs[${oi}].segments[${si}].color=this.value"></label>
+		  <label>Group: <input type="text" value="${seg.group}" oninput="outputs[${oi}].segments[${si}].group=this.value"></label>
+        </div>
+      `;
+
+		segCard.querySelectorAll("input").forEach(input => {
+		  attachChangeHandler(input, () => {
+			const key = input.name; // must match the property in outputs[oi].segments[si]
+			if (input.type === "checkbox") {
+			  outputs[oi].segments[si][key] = input.checked;
+			} else if (input.type === "number") {
+			  outputs[oi].segments[si][key] = parseInt(input.value);
+			} else {
+			  outputs[oi].segments[si][key] = input.value;
+			}
+			sendToESP();
+		  });
+		});
+
+      const dragHandle = segCard.querySelector(".drag-handle");
+      dragHandle.addEventListener("mousedown", () => {
+        segCard.draggable = true;
+      });
+      segCard.addEventListener("dragstart", e => {
+		console.log(e.target.closest);
+		if (!e.target.closest('.drag-handle')) {
+			e.preventDefault();
+			return;
+		  }
+        e.dataTransfer.setData("text/plain", JSON.stringify({ oi, si }));
+      });
+      segCard.addEventListener("dragover", e => e.preventDefault());
+      segCard.addEventListener("drop", e => {
+        e.preventDefault();
+        const data = JSON.parse(e.dataTransfer.getData("text/plain"));
+        if (data.oi === oi) {
+          const moved = outputs[oi].segments.splice(data.si, 1)[0];
+          let dropIndex = si;
+          if (data.si < si) dropIndex++;
+          outputs[oi].segments.splice(dropIndex, 0, moved);
+          renderOutputs();
+        }
+      });
+
+      outputDiv.appendChild(segCard);
+    });
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "+ Add Segment";
+    addBtn.onclick = () => addSegment(oi);
+    outputDiv.appendChild(addBtn);
+    outputsDiv.appendChild(outputDiv);
+  });
+
+  sendToESP();
+  console.log("Update!");
+}
+
+function saveConfig() {
+  const blob = new Blob([JSON.stringify(outputs, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "led_config.json";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function loadConfig(event) {
+  const fileInput = event.target;
+  const file = fileInput.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (Array.isArray(data)) {
+        outputs = data;
+        renderOutputs();   // rebuild UI
+        sendToESP();       // send updated config to ESP
+      } else {
+        alert("Invalid config format!");
+      }
+    } catch (err) {
+      alert("Error loading config: " + err.message);
+    } finally {
+      // Reset input so selecting the same file again will still trigger onchange
+      fileInput.value = "";
+    }
+  };
+  reader.readAsText(file);
+}
+
+</script>

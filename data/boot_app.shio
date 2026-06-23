@@ -1,0 +1,17 @@
+using std;
+
+print("BOOTSCRIPT V1.1");
+
+web_portal = None;
+apps = [];
+
+try {
+	print("Loading web_portal...");
+	web_portal = std.module();
+	web_portal.load_file("web.shio");
+	std.print("OK.");
+}
+catch(e) {
+	std.print("ERROR.");
+}
+

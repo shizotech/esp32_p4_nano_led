@@ -1,0 +1,274 @@
+
+using std;
+using eigen;
+
+mic = esp32.mic();
+mic.install();
+
+//This class is important to handle rollovers
+//Aswell as floating point precision by wrapping the max values.
+class fx_time
+{
+	total_time = 0;
+	last_time = -1;
+	
+	current_time = 0;
+	current_delta = 0;
+	
+	update()
+	{
+		current_millis = millis();
+		
+		if(last_time == -1)
+			last_time = current_millis;
+		if(current_millis < last_time)
+			last_time = current_millis;
+		
+		delta = current_millis - last_time;
+		
+		last_time = current_millis;
+		
+		total_time += delta;
+		
+		total_time = math.mod(total_time, 4000 * 1000); //Wrap around 4 million ms (~1 hrs), makes speedmult safe for up to 4x
+		
+		current_time = (total_time / 1000.0);
+		current_delta = (delta / 1000.0);
+	}
+	
+	get_time(speed_mult = 1.0)
+	{
+		//TODO: Add webui option to disable this...
+		return mic.beat() * speed_mult;
+		//return current_time * speed_mult;
+	}
+	
+	get_delta(speed_mult = 1.0)
+	{
+		return current_delta * speed_mult;
+	}
+	
+	get_frac(speed_mult)
+	{
+		return math.fract(get_time(speed_mult));
+	}
+};
+
+smoothstep_param(t,  k)
+{
+    // Clamp inputs
+    t = math.clamp(t, 0.0, 1.0);
+    k = math.clamp(k, 0.0, 1.0);
+
+    // Linear
+    linear = t;
+
+    // Smoothstep
+    smooth = t * t * t * (t * (t * 6 - 15) + 10);
+
+    // Blend: k=0 → linear, k=1 → smoothstep
+    return (1.0 - k) * linear + k * smooth;
+}
+
+TimeControl = fx_time();
+scanner_states = [];
+
+init_fx()
+{
+	print("---INIT FX---");
+	
+	driver.set_frame_callback([]()
+	{
+		TimeControl.update();
+	});
+	
+	//TODO: make fx functions accept ScriptVector
+	
+	//example
+	driver.add_effect("Solid Color", [](seg, color1, color2, color3) 
+	{
+		//seg.count, seg.intensity, seg.speed
+		color1 = color1 * seg.intensity;
+		//std.print(color1);
+		driver.fx_clear(color1);
+	});
+	
+	driver.add_effect("Chase1", [](seg, color1, color2, color3)
+	{
+		chase_width = seg.ctrl1 * seg.count;
+		
+		perc = TimeControl.get_frac(seg.speed);
+		
+		color1 = color1 * seg.intensity;
+		
+		pos = perc * seg.count;
+		
+		driver.fx_clear(color2);
+		driver.fx_pixels(pos, chase_width, color1 /** mic.peak()*/);
+		//print(mic.peak());
+		if (pos + chase_width > seg.count) {
+			overflow = (pos + chase_width) - seg.count;
+			driver.fx_pixels((0-chase_width) + overflow, chase_width, color1 /** mic.peak_band(1) * mic.peak_band(1)*/);
+		}
+	});
+	
+	driver.add_effect("Chase2", [](seg, color1, color2, color3)
+	{
+		chase_width = seg.ctrl1 * seg.count;
+		chase_width_neg = 0 - chase_width;
+		
+		curtime = TimeControl.get_time(seg.speed);
+		perc = math.fract(curtime);
+		
+		if(math.mod(int(curtime), 2) == 0)
+			perc = 1.0 - perc;
+		
+		perc = smoothstep_param(perc, seg.ctrl2);
+		
+		color1 = color1 * seg.intensity;
+		
+		driver.fx_clear(color2);
+		driver.fx_pixels(chase_width_neg + perc * (seg.count+chase_width+1), chase_width, color1 /** mic.peak_band(1) * mic.peak_band(1)*/);
+	});
+	
+	
+	driver.add_effect("Beat", [](seg, color1, color2, color3)
+	{
+		curtime = TimeControl.get_time(seg.speed);
+		perc = math.fract(curtime);
+		
+		perc = 1.0 - perc;
+		
+		perc = perc * perc;
+		
+		color1 = color1 * seg.intensity * perc;
+		
+		driver.fx_clear(color1);
+	});
+	
+	driver.add_effect("BeatAudio", [](seg, color1, color2, color3)
+	{
+		perc = 1.0 * mic.peak_band(1);
+		
+		perc = perc * perc;
+		
+		color1 = color1 * seg.intensity * perc;
+		
+		driver.fx_clear(color1);
+	});
+	
+	driver.add_effect("BeatAudio2", [](seg, color1, color2, color3)
+	{
+		curtime = TimeControl.get_time(seg.speed);
+		perc = math.fract(curtime);
+		
+		perc = 1.0 - perc;
+		
+		perc = perc * perc;
+		
+		color1 = color1 * seg.intensity * perc * mic.peak_band(1);
+		
+		driver.fx_clear(color1);
+	});
+	
+	driver.add_effect("Sparkle", [](seg, color1, color2, color3)
+	{
+		ctrl1 = 0.0 - math.max(0.01,seg.ctrl1);
+		neg_color = vec3f(ctrl1,ctrl1,ctrl1);
+		driver.fx_pixels(0, seg.count, neg_color);
+		
+		rnd_perc = math.random_float(0,seg.ctrl3);
+		
+		tmp_color = color1 * (1.0 - rnd_perc) + color2 * rnd_perc;
+		
+		for(i = 0; i < math.max(1,seg.ctrl2*30 *mic.peak()); i++)
+		{
+			driver.fx_pixel(math.random_int(0,seg.count), tmp_color*seg.intensity);
+		}
+	});
+	
+	driver.add_effect("Spectrum", [](seg, color1, color2, color3)
+	{
+		num_bins = mic.num_bins();
+		
+		driver.fx_clear(vec3f(0,0,0));
+		
+		print(mic.peak_bin((num_bins-1) * seg.ctrl1));
+		
+		max_pixels = 100;
+		
+		for(i = 0; i < max_pixels; i++)
+		{
+			perc = i / float(max_pixels);
+			driver.fx_pixel(i, color1*seg.intensity*mic.peak_bin(perc * (num_bins-1)));
+		}
+	});
+	
+	driver.add_effect("Spectrum2", [](seg, color1, color2, color3)
+	{
+		driver.fx_clear(vec3f(0,0,0));
+		
+		num_bands = 8;
+		
+		band = math.mod(seg.index, num_bands);
+		
+		driver.fx_pixels(0, seg.count, color1*seg.intensity*mic.peak_band(band)*mic.peak_band(band));
+	}, 1);
+	
+	driver.add_effect("Scanner", [](seg, color1, color2, color3)
+	{
+		driver.fx_clear(vec3f(0,0,0));
+		
+		num_bands = 8;
+		
+		band = math.mod(seg.index, num_bands);
+		
+		if(seg.global_index >= scanner_states.size())
+			scanner_states.resize(seg.global_index+1);
+
+		scanner_states[seg.global_index] += (seg.speed/4) /** mic.peak_band(band)*/;
+		scanner_states[seg.global_index] = math.fract(scanner_states[seg.global_index]);
+		
+		state = scanner_states[seg.global_index] * 2.0;
+		
+		perc = state;
+		if(perc > 1.0)
+			perc = 1.0 - (perc - 1.0);
+
+		chase_width = seg.ctrl1 * seg.count /** mic.peak_band(band)*/;
+		
+		pos = perc * (seg.count - chase_width);
+		
+		driver.fx_pixels(pos, chase_width, color1 * seg.intensity);
+		
+	}, 1);
+	
+	driver.add_effect("Scanner 2", [](seg, color1, color2, color3)
+	{
+		driver.fx_clear(vec3f(0,0,0));
+		
+		num_bands = 8;
+		
+		band = math.mod(seg.index, num_bands);
+		
+		if(seg.global_index >= scanner_states.size())
+			scanner_states.resize(seg.global_index+1);
+		
+		scanner_states[seg.global_index] += (seg.speed/4) /** mic.peak_band(band)*/;
+		scanner_states[seg.global_index] = math.fract(scanner_states[seg.global_index]);
+		
+		perc = scanner_states[seg.global_index];
+		perc = perc * perc;
+		
+		chase_width = seg.ctrl1 * seg.count;
+		
+		pos = perc * (seg.count - chase_width);
+		
+		driver.fx_pixels(pos, chase_width, color1 /** mic.peak()*/);
+		//print(mic.peak());
+		if (pos + chase_width > seg.count) {
+			overflow = (pos + chase_width) - seg.count;
+			driver.fx_pixels((0-chase_width) + overflow, chase_width, color1 /** mic.peak()*/);
+		}
+	}, 1);
+}

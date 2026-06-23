@@ -1,0 +1,296 @@
+<section id="animation-editor">
+  <h2>Group Animations</h2>
+  <div id="group-animation-container"></div>
+</section>
+
+<style>
+  #animation-editor {
+    padding: 0.2rem;
+  }
+  .group-card {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 0.2rem;
+    margin-bottom: 1rem;
+    background: #100d0d;
+  }
+  .group-header {
+    font-weight: bold;
+    margin-bottom: 0.5rem;
+  }
+  .anim-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .anim-row label {
+    flex: 0 0 120px;
+	text-align: right;
+	padding-right: 0.5rem;
+  }
+  .anim-row select, .anim-row input[type="color"], .anim-row input[type="number"], .anim-row input[type="range"] {
+    flex: 1;
+  }
+  .anim-row input[type="checkbox"] {
+    transform: scale(1.2);
+  }
+  
+  .anim-row input[type="range"] {
+	  flex: 1;
+	}
+  
+  .slider-value {
+	  display: inline-block;
+	  width: 3rem;      /* enough space for "1.00" */
+	  text-align: right;
+	  font-family: monospace; /* optional, for nice alignment */
+	}
+
+</style>
+
+<script>
+let animations = {};
+let effectsList = [];
+
+function initAnimations() {
+  Promise.all([
+    fetch('/segments_get', { method: 'POST' }).then(r => r.json()),
+    fetch('/effects_get', { method: 'POST' }).then(r => r.json())
+  ])
+  .then(([segmentsData, effectsData]) => {
+    let groups = new Set();
+    (segmentsData || []).forEach(output => {
+      (output.segments || []).forEach(seg => {
+        if (seg.group) groups.add(seg.group);
+      });
+    });
+    effectsList = effectsData || [];
+    buildAnimationUI(Array.from(groups), effectsList);
+  })
+  .catch(err => console.error('Init animations failed:', err));
+}
+
+function buildAnimationUI(groups, effect_list) {
+  const container = document.getElementById('group-animation-container');
+  container.innerHTML = '';
+
+  const defaults = {
+    effect: 'NO EFFECT',
+    speed: 0.5,
+    intensity: 0.5,
+	ctrl1: 0.5,
+	ctrl2: 0.5,
+	ctrl3: 0.5,
+    direction: 'forward',
+    color1: '#ffffff',
+    color2: '#000000',
+    palette: '',
+    enabled: true
+  };
+
+  // Tolerant to either array of strings or array of {name,id}
+  const effects = (effect_list.effects || []).map(e => typeof e === 'string' ? e : (e.name ?? e.id ?? '')).filter(Boolean)
+	.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  const palettes = (effect_list.palettes || []).map(p => typeof p === 'string' ? p : (p.name ?? p.id ?? ''));
+
+  groups.forEach(group => {
+    const saved = (effect_list.settings && effect_list.settings[group]) || {};
+    animations[group] = {
+      ...defaults,
+      ...saved,
+      enabled: saved.enabled !== undefined ? !!saved.enabled : defaults.enabled
+    };
+
+    const card = document.createElement('div');
+    card.className = 'group-card';
+    card.innerHTML = `
+      <div class="group-header">Group: ${group}</div>
+
+      <div class="anim-row">
+        <label>Enabled</label>
+        <input type="checkbox" data-group="${group}" data-key="enabled">
+      </div>
+
+      <div class="anim-row">
+        <label>Effect</label>
+        <select data-group="${group}" data-key="effect">
+          ${effects.map(name => `<option value="${name}">${name}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="anim-row">
+        <label>Speed</label>
+        <input type="range" min="0.0" max="2.0" step="0.0625" data-group="${group}" data-key="speed">
+		<span class="slider-value" data-group="${group}" data-key="speed"></span>
+	  </div>
+
+      <div class="anim-row">
+        <label>Intensity</label>
+        <input type="range" min="0.0" max="1.0" step="0.01" data-group="${group}" data-key="intensity">
+		<span class="slider-value" data-group="${group}" data-key="intensity"></span>
+	  </div>
+	  
+	  <div class="anim-row">
+        <label>Control 1</label>
+        <input type="range" min="0.0" max="1.0" step="0.01" data-group="${group}" data-key="ctrl1">
+		<span class="slider-value" data-group="${group}" data-key="ctrl1"></span>
+	  </div>
+	  
+	  <div class="anim-row">
+        <label>Control 2</label>
+        <input type="range" min="0.0" max="1.0" step="0.01" data-group="${group}" data-key="ctrl2">
+		<span class="slider-value" data-group="${group}" data-key="ctrl2"></span>
+	  </div>
+	  
+	  <div class="anim-row">
+        <label>Control 3</label>
+        <input type="range" min="0.0" max="1.0" step="0.01" data-group="${group}" data-key="ctrl3">
+		<span class="slider-value" data-group="${group}" data-key="ctrl3"></span>
+	  </div>
+
+      <div class="anim-row">
+        <label>Direction</label>
+        <select data-group="${group}" data-key="direction">
+          <option value="forward">Forward</option>
+          <option value="reverse">Reverse</option>
+        </select>
+      </div>
+
+      <div class="anim-row">
+        <label>Color 1</label>
+        <input type="color" data-group="${group}" data-key="color1">
+      </div>
+
+      <div class="anim-row">
+        <label>Color 2</label>
+        <input type="color" data-group="${group}" data-key="color2">
+      </div>
+
+      <div class="anim-row">
+        <label>Palette</label>
+        <select data-group="${group}" data-key="palette">
+          <option value="">Default</option>
+          ${palettes.map(name => `<option value="${name}">${name}</option>`).join('')}
+        </select>
+      </div>
+    `;
+
+    container.appendChild(card);
+
+    // ---- set UI state via properties (not attributes) ----
+    const setSelectValue = (sel, value) => {
+      const norm = s => (s ?? '').toString().trim();
+      const v = norm(value);
+      if (!sel) return;
+      if (!v) { sel.selectedIndex = 0; return; }
+      const match = Array.from(sel.options).find(o => norm(o.value).toLowerCase() === v.toLowerCase());
+      if (match) sel.value = match.value;
+      else {
+        // ensure value exists as an option so .value sticks
+        sel.insertAdjacentHTML('afterbegin', `<option value="${v}">${v}</option>`);
+        sel.value = v;
+      }
+    };
+
+    // inside buildAnimationUI after card creation
+	const enabledEl   = card.querySelector('input[type="checkbox"][data-key="enabled"]');
+	const effectEl    = card.querySelector('select[data-key="effect"]');
+	const speedEl     = card.querySelector('input[type="range"][data-key="speed"]');
+	const intensityEl = card.querySelector('input[type="range"][data-key="intensity"]');
+	const directionEl = card.querySelector('select[data-key="direction"]');
+	const color1El    = card.querySelector('input[type="color"][data-key="color1"]');
+	const color2El    = card.querySelector('input[type="color"][data-key="color2"]');
+	const paletteEl   = card.querySelector('select[data-key="palette"]');
+
+	if (enabledEl)   enabledEl.checked = !!animations[group].enabled;
+
+	if (speedEl) {
+	  speedEl.value = animations[group].speed;
+	  const span = card.querySelector('.slider-value[data-key="speed"]');
+	  if (span) span.textContent = speedEl.value;
+	}
+
+	if (intensityEl) {
+	  intensityEl.value = animations[group].intensity;
+	  const span = card.querySelector('.slider-value[data-key="intensity"]');
+	  if (span) span.textContent = intensityEl.value;
+	}
+
+	const ctrl1El = card.querySelector('input[type="range"][data-key="ctrl1"]');
+	const ctrl2El = card.querySelector('input[type="range"][data-key="ctrl2"]');
+	const ctrl3El = card.querySelector('input[type="range"][data-key="ctrl3"]');
+
+	if (ctrl1El) {
+	  ctrl1El.value = animations[group].ctrl1;
+	  const span = card.querySelector('.slider-value[data-key="ctrl1"]');
+	  if (span) span.textContent = parseFloat(ctrl1El.value).toFixed(2);
+	}
+	if (ctrl2El) {
+	  ctrl2El.value = animations[group].ctrl2;
+	  const span = card.querySelector('.slider-value[data-key="ctrl2"]');
+	  if (span) span.textContent = parseFloat(ctrl2El.value).toFixed(2);
+	}
+	if (ctrl3El) {
+	  ctrl3El.value = animations[group].ctrl3;
+	  const span = card.querySelector('.slider-value[data-key="ctrl3"]');
+	  if (span) span.textContent = parseFloat(ctrl3El.value).toFixed(2);
+	}
+	
+	if (color1El) color1El.value = animations[group].color1;
+	if (color2El) color2El.value = animations[group].color2;
+	setSelectValue(effectEl,    animations[group].effect);
+	setSelectValue(directionEl, animations[group].direction);
+	setSelectValue(paletteEl,   animations[group].palette);
+  });
+
+  attachAnimationListeners();
+  sendAnimationsToESP();
+}
+
+function attachAnimationListeners() {
+  document.querySelectorAll('#group-animation-container [data-group]').forEach(el => {
+    el.addEventListener('input', e => {
+      const group = e.target.dataset.group;
+      const key = e.target.dataset.key;
+      animations[group][key] = (e.target.type === 'checkbox') ? e.target.checked : e.target.value;
+      
+	  if (e.target.type === 'range') {
+		  const span = e.target.parentElement.querySelector(`.slider-value[data-key="${key}"]`);
+		  if (span) span.textContent = e.target.value;  // FIXED
+		}
+	  
+	  sendAnimationsToESP();
+    });
+  });
+}
+
+let sendingAnimations = false;
+let sendAnimationsPending = false;
+function sendAnimationsToESP() {
+  if (sendingAnimations) {
+    sendAnimationsPending = true;
+    return;
+  }
+  
+  sendingAnimations = true;
+  fetch('/animations_update', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(animations)
+  })
+  .then(r => r.text())
+  .then(txt => console.log('Animations updated:', txt))
+  .catch(err => console.error('Animation send failed:', err))
+  .finally(() => {
+    sendingAnimations = false;
+    if (sendAnimationsPending) {
+      sendAnimationsPending = false;
+      sendAnimationsToESP();
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', initAnimations);
+</script>

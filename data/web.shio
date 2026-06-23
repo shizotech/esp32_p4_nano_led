@@ -1,0 +1,742 @@
+
+using std;
+
+print("Hello web!");
+
+//These are needed because the ESP hangs when fileio functions are called from another
+//task (fix return_thread !!!)
+
+trigger_config_update = 0;
+trigger_segment_update = 0;
+trigger_effect_update = 0;
+
+server = esp32.webserver();
+net = shizonet.client();
+driver = None;
+
+#include "effects"
+
+led_segments = fileio.read_json("segments.json");
+led_segments_groups = 0;
+effect_groups = fileio.read_json("effects.json");
+
+dmx_fixtures = fileio.read_json("dmx_fixtures.json");
+
+has_solo_segments = 0;
+
+last_num_outputs = -1;
+last_max_leds = -1;
+
+//First ever init
+if(!led_segments)
+{
+	led_segments = [
+		[name="Output 1", pin=21, segments=[[name="Segment 1", width=10, height=1, count=1, color="#000000", brightness=255, enabled=1, group="Default"]]]
+	];
+}
+
+get_color(str)
+{
+	//LittleFS statt FatFS ?
+	if(std.is_json(str))
+		return str;
+	
+	r = 0;
+	g = 0;
+	b = 0;
+	if(str[0] == "#")
+	{
+		r = std.float(std.hex_to_char(str.substr(1,2))) / 255.0;
+		g = std.float(std.hex_to_char(str.substr(3,2))) / 255.0;
+		b = std.float(std.hex_to_char(str.substr(5,2))) / 255.0;
+	}
+	return [r=r,g=g,b=b];
+}
+
+interpolate_color(&col1, &col2, trans) {
+	return [
+		r = math.lerp(col1.r, col2.r, trans),
+		g = math.lerp(col1.g, col2.g, trans),
+		b = math.lerp(col1.b, col2.b, trans),
+	];
+}
+
+get_leds_out_count()
+{
+	max_outs = 0;
+	has_solo_segments = 0;
+	for(i = 0; i < led_segments.size(); i++)
+	{
+		it = &led_segments[i];
+		
+		if(!it.segments)
+			continue;
+		
+		seg_count = 0;
+		for(j = 0; j < it.segments.size(); j++)
+		{
+			seg = &it.segments[j];
+			seg_count += seg.width * math.max(1,seg.count);
+			if(seg.testout)
+				has_solo_segments = 1;
+		}
+		if(seg_count > max_outs)
+			max_outs = seg_count;
+	}
+	
+	return std.int(max_outs);
+}
+
+init_driver()
+{
+	pins = [];
+	max_output = get_leds_out_count();
+	
+	for(i = 0; i < led_segments.size(); i++)
+	{
+		it = &led_segments[i];
+		pins.push_back(it.pin);	
+	}
+	
+	std.print("init driver with pins:");
+	std.print(pins);
+	std.print("And max led out: " + max_output);
+	std.print("LED Channels: " + 3);
+	
+	if(max_output == 0)
+		return;
+	if(!pins)
+		return;
+	
+	if(!driver)
+	{
+		driver = esp32.led_driver(pins, max_output, 3);
+		driver.enable_artnet();
+		driver.show();
+		init_fx();
+	}
+	else
+	{
+		driver.blackout();
+		driver.show_now();
+		driver.init_leds(pins, max_output, 3);
+	}
+}
+
+last_num_outputs = -1;
+last_max_leds = -1;
+
+update_segments()
+{
+	std.print("get led count...");
+	new_max_leds = get_leds_out_count();
+	std.print(new_max_leds);
+	
+	if(last_max_leds != new_max_leds || last_num_outputs != led_segments.size())
+	{
+		//Re-init driver...
+		print("---REINIT DRIVER---");
+		init_driver();
+	}
+	
+	if(!driver)
+		print("driver was not initialized.");
+		return;
+	
+	last_max_leds = new_max_leds;
+	last_num_outputs = led_segments.size();
+	
+	driver.set_target("SMOOTHBUFFER");
+	
+	led_segments_groups = 0;
+		
+	output_id = 0;
+	for(i = 0; i < led_segments.size(); i++) {
+	
+		it = &led_segments[i];
+		segment_id = 0;
+		current_index = 0;
+		
+		if(!it.segments)
+			continue;
+		
+		for(j = 0; j < it.segments.size(); j++) {
+			seg = &it.segments[j];
+
+			group = &led_segments_groups[seg.group];
+			group.push_back(*seg);
+			
+			ledcount = int(seg.width * math.max(1,seg.height));
+			
+			//Weird bug:
+			//led_segments_groups[seg.group][group_name].push_back() doesnt work as expected ???
+			//Debug that !!!
+			
+			for(k = 0; k < seg.count; k++)
+			{			
+				//Sort after group and total LED count (to avoid double rendering same segments)
+				group_name = string(ledcount);
+				entry = &group[group_name];
+				//std.print(led_segments_groups);
+				entry.push_back([output=output_id, index=current_index, count=ledcount]);
+				//std.print(led_segments_groups);
+			}
+			
+			brightness = seg.brightness / 255.0;
+			col = get_color(seg.color);
+			
+			if(has_solo_segments && !seg.testout)
+				brightness = 0;
+			
+			driver.set_pixels(output_id, current_index, seg.width * math.max(1,seg.height) * math.max(1,seg.count), col.r*brightness*255.0, col.g*brightness*255.0, col.b*brightness*255.0);
+			current_index += seg.width * math.max(1, seg.height) * math.max(1, seg.count);
+			segment_id++;
+		}
+		
+		output_id++;
+	}
+	
+	std.print(led_segments_groups);
+	
+	driver.set_effect_groups(led_segments_groups);
+	
+	print("updated segments.");
+}
+
+start_effect = None;
+current_effect = None;
+current_effect_transit = 0.0;
+
+update_anims()
+{
+	if(!driver)
+		std.print("driver was not initialized.");
+		return;
+
+	if(!effect_groups)
+		return;
+	
+	for(i = 0; i < effect_groups.size(); i++)
+	{
+		if(!effect_groups[i].intensity)
+			effect_groups[i].intensity = 0.5;
+		effect_groups[i].intensity = std.float(effect_groups[i].intensity);
+		
+		if(!effect_groups[i].speed)
+			effect_groups[i].speed = 0.5;
+		effect_groups[i].speed = std.float(effect_groups[i].speed);
+		
+		if(!effect_groups[i].ctrl1)
+			effect_groups[i].ctrl1 = 0.5;
+		effect_groups[i].ctrl1 = std.float(effect_groups[i].ctrl1);
+		
+		if(!effect_groups[i].ctrl2)
+			effect_groups[i].ctrl2 = 0.5;
+		effect_groups[i].ctrl2 = std.float(effect_groups[i].ctrl2);
+		
+		if(!effect_groups[i].ctrl3)
+			effect_groups[i].ctrl3 = 0.5;
+		effect_groups[i].ctrl3 = std.float(effect_groups[i].ctrl3);
+		
+		driver.set_effect(effect_groups.key(i), effect_groups[i].effect);
+	}
+
+	if(!current_effect)
+		current_effect = effect_groups;
+	
+	start_effect = current_effect;
+	
+	current_effect_transit = 0.0;
+}
+
+update_anims_thread() {
+	for(1) {
+		if(current_effect_transit <= 1.0) {
+			try {
+				
+				for(i = 0; i < effect_groups.size(); i++)
+				{
+					driver.set_effect(effect_groups.key(i), effect_groups[i].effect);
+					
+					old_col1 = get_color(start_effect[i].color1);
+					old_col2 = get_color(start_effect[i].color2);
+					
+					new_col1 = get_color(effect_groups[i].color1);
+					new_col2 = get_color(effect_groups[i].color2);
+					
+					col1 = interpolate_color(&old_col1, &new_col1, current_effect_transit);
+					col2 = interpolate_color(&old_col2, &new_col2, current_effect_transit);
+
+					current_effect[i].color1 = col1;
+					current_effect[i].color2 = col2;
+
+					driver.set_effect_color1(effect_groups.key(i), col1.r, col1.b, col1.g);
+					driver.set_effect_color2(effect_groups.key(i), col2.r, col2.b, col2.g);
+					
+					//driver.set_effect_color1(effect_groups.key(i), new_col1.r, new_col1.b, new_col1.g);
+					//driver.set_effect_color2(effect_groups.key(i), new_col2.r, new_col2.b, new_col2.g);
+					
+					
+					//std.print(col1);
+					
+					current_effect[i].intensity = math.lerp(start_effect[i].intensity, effect_groups[i].intensity, current_effect_transit);
+					current_effect[i].speed = math.lerp(start_effect[i].speed, effect_groups[i].speed, current_effect_transit);
+					current_effect[i].ctrl1 = math.lerp(start_effect[i].ctrl1, effect_groups[i].ctrl1, current_effect_transit);
+					current_effect[i].ctrl2 = math.lerp(start_effect[i].ctrl2, effect_groups[i].ctrl2, current_effect_transit);
+					current_effect[i].ctrl3 = math.lerp(start_effect[i].ctrl3, effect_groups[i].ctrl3, current_effect_transit);
+								
+					//std.print(current_effect[i].intensity);			
+							
+					driver.set_effect_intensity(effect_groups.key(i), current_effect[i].intensity);
+					driver.set_effect_speed(effect_groups.key(i), current_effect[i].speed);
+					driver.set_effect_ctrl1(effect_groups.key(i), current_effect[i].ctrl1);	
+					driver.set_effect_ctrl2(effect_groups.key(i), current_effect[i].ctrl2);	
+					driver.set_effect_ctrl3(effect_groups.key(i), current_effect[i].ctrl3);		
+					
+					/*
+					driver.set_effect_intensity(effect_groups.key(i), effect_groups[i].intensity);
+					driver.set_effect_speed(effect_groups.key(i), effect_groups[i].speed);
+					driver.set_effect_ctrl1(effect_groups.key(i), effect_groups[i].ctrl1);	
+					driver.set_effect_ctrl2(effect_groups.key(i), effect_groups[i].ctrl2);	
+					driver.set_effect_ctrl3(effect_groups.key(i), effect_groups[i].ctrl3);
+					*/
+				}
+			}
+			catch(e) {}
+			
+			current_effect_transit += 0.01;
+			std.sleep(16);
+			continue;
+		}
+		
+		std.sleep(100);
+	}
+}
+
+templates = [
+	menu=fileio.read_string("/ui/menu.html"),
+	styles=fileio.read_string("/ui/styles.css"),
+];
+
+//-----------------------------------------
+
+//Start loading UI elements automatically
+std.print("Loading templates...");
+templated_files = fileio.files("/ui/templates");
+std.print(templated_files);
+for(i = 0; i < templated_files.size(); i++)
+{
+	tmpl_name = fileio.pure_name(templated_files[i]);
+	templates[tmpl_name] = fileio.read_string(templated_files[i]);
+}
+
+templated_files = fileio.files("/ui/static");
+std.print(templated_files);
+for(i = 0; i < templated_files.size(); i++)
+{
+	tmpl_name = fileio.pure_name(templated_files[i]);
+	templates[tmpl_name] = fileio.read_string(templated_files[i]);
+}
+
+for(i = 0; i < templates.size(); i++) {
+	std.print(templates.key(i));
+}
+
+class web_page
+{
+  html = "";
+
+  __init__() {
+    html += render_templ("page_start", [styles=templates["styles"]]);
+  }
+
+  get()
+  {
+    final_html = html;
+    if(!closed_last_section)
+			final_html += render_templ("section_end");
+    final_html += render_templ("page_end");
+    return final_html;
+  }
+
+  add_section(title, infotext = "")
+	{
+		if(!closed_last_section)
+			html += render_templ("section_end");
+		closed_last_section = 1;
+		if(!title.empty())
+			html += render_templ("section_start", [section_title = title, section_text=infotext]);
+			closed_last_section = 0;
+	}
+
+  add_ctrl(type, name, cb, options)
+  {
+    id = get_id(name);
+    
+    options.id = id;
+    options.name = name;
+    
+    str = render_templ("control_" + type, options);	
+    
+    server.post("/"+id, [this, cb](post_data)
+    {
+      cb(post_data);
+      return "success";
+    });
+    
+    html += str;
+  }
+
+  add_slider(name, cb, minv, maxv, defaultv)
+  {
+    options = [min=minv, max=maxv, value=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.value = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id);
+      esp32.config()[id] = post_data.value;
+      trigger_config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+    
+    add_ctrl("slider", name, cb2, options);
+  }
+
+  add_text(name, cb, defaultv)
+  {
+    options = [value=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.value = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id);
+      esp32.config()[id] = post_data.value;
+      trigger_config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+    
+    add_ctrl("text", name, cb2, options);
+  }
+
+  add_checkbox(name, cb, defaultv)
+  {
+    options = [checked=defaultv];
+    
+    id = get_id(name);
+    
+    if(esp32.config().has(id))
+      options.checked = esp32.config()[id];
+    
+    cb2 = [id](post_data)
+    {
+      std.print("updating: " + id);
+      esp32.config()[id] = post_data.value;
+      trigger_config_update = 1;
+    };
+    
+    if(std.is_function(cb))
+      cb2 = cb;
+
+    //'checked' html attribute
+		if(options.checked)
+			options.checked = "checked";
+		else
+			options.checked = "";
+    
+    add_ctrl("checkbox", name, cb2, options);
+  }
+
+  add_template(alias, args = None) {
+	  html += render_templ(alias, &args);
+  }
+
+  get_id(name)
+  {
+    id = name.lowercase();
+    id = id.removecharsexcept("abcdefghijklmnopqrstuvwqyz0123456789");
+    return id;
+  }
+
+  render(src, args = None) {
+    if(!args)
+      return src;
+    for(i = 0; i < args.size(); i++) {
+      src = src.replace("{{"+args.key(i)+"}}", args[i]);
+    }
+    return src;
+  }
+
+  render_templ(alias, args = 0)
+  {
+	if(!templates.has(alias))
+		std.print("Cannot find: ", alias);
+		return "";
+	  
+    return render(&templates[alias], &args);
+  }
+
+  closed_last_section = 1;
+}
+
+class web_menu
+{
+  header_buttons = [
+	"EFFECTS" = "/home",
+    "SETTINGS" = "/settings",
+	"LED SETUP" = "/segments",
+	"DMX" = "/dmx",
+    "FILES" = "/filebrowser",
+    "UPDATE" = "/update"
+  ];
+
+  __init__() {
+    on("/", [this]()
+    {
+      hdr = "";
+      //<a href="/home" target="contentFrame">🏠 Home</a>
+      for(i = 0; i < this.header_buttons.size(); i++)
+      {
+        hdr += "<a href='" + this.header_buttons[i] + "' target='contentFrame'>" + this.header_buttons.key(i) + "</a>\n";
+      }
+
+      name = net.name();
+      name += " [" + net.mac() + "] (" + net.ip() + ")";
+      return this.render_templ("main", [name = name, header_buttons = hdr]);
+    });
+	
+	on("/home", [this]()
+	{
+		page = web_page();
+		page.add_template("animation_editor");
+		return page.get();
+	});
+
+    on("/settings", [this]()
+    {
+		page = web_page();
+		page.add_section("Network", "Network settings");
+		page.add_text("Name", 0, "ESP32");
+		page.add_text("Password", 0, "admin");
+		page.add_text("IP", 0, "2.0.0.10");
+		page.add_text("Gateway", 0, "2.0.0.1");
+		page.add_text("Netmask", 0, "255.255.255.0");
+		page.add_checkbox("DHCP Server", 0, 0);
+
+		page.add_section("Connect to WLANs");
+
+		wlans = esp32.config("wlans");
+		
+		if(!wlans)
+			wlans = [];
+
+		wlans.resize(6);
+
+		add_wlan_option = [page, &wlans](numid)
+		{
+			def_ssid = wlans[numid].ssid;
+			if(!def_ssid)
+				def_ssid = "";
+			def_pw = wlans[numid].password;
+			if(!def_pw)
+				def_pw = "";
+			
+			page.add_text("WLAN " + (numid+1) + " Name", [numid](post_data)
+			{
+				print("updating: wlan" + numid);
+				wlans = esp32.config("wlans");
+				
+				if(!wlans)
+					wlans = [];		
+				if(numid >= wlans.size())
+					wlans.resize(numid+1);
+				
+				wlans[numid].ssid = post_data.value;
+				esp32.set_config("wlans", wlans);
+				trigger_config_update = 1;
+			}, def_ssid);
+			
+			page.add_text("WLAN " + (numid+1) + " Password", [numid](post_data)
+			{
+				print("updating: wlan" + numid);
+				wlans = esp32.config("wlans");
+				
+				if(!wlans)
+					wlans = [];		
+				if(numid >= wlans.size())
+					wlans.resize(numid+1);
+				
+				wlans[numid].password = post_data.value;
+				esp32.set_config("wlans", wlans);
+				trigger_config_update = 1;
+			}, def_pw);
+		};
+		
+
+		for(i = 0; i < wlans.size(); i++)
+		{
+			add_wlan_option(i);
+		}
+	  
+		return page.get();
+    });
+	
+	on("/segments", [this]()
+	{
+		page = web_page();
+		page.add_template("segment_editor");
+		return page.get();
+	});
+	
+	on_json("/segments_get", [this](post_data)
+	{	
+		return led_segments;
+	});
+	
+	on_post("/segments_update", [this](post_data)
+	{	
+		print("update segments...");
+		segments_json = std.json(post_data.plain);
+		if(!segments_json)
+			return;
+		//std.print(post_data.plain);
+		led_segments = segments_json;
+		update_segments();
+		trigger_segment_update = true;
+		return post_data.plain;
+	});
+	
+	on_json("/effects_get", [this](post_data)
+	{	
+		return [effects=driver.get_effects(),
+				palettes = [
+					[name="Warm",id="builtin_warm"],
+					[name="Cool",id="builtin_cool"],
+					[name="Party",id="builtin_party"],
+				],
+				settings = effect_groups,
+			];
+	});
+	
+	on_post("/animations_update", [this](post_data)
+	{	
+		std.print("Animation update...");
+		effect_groups = std.json(post_data.plain);
+		if(!effect_groups)
+			return "";
+		update_anims();
+		trigger_effect_update = true;
+		std.print("OK");
+		return "";
+	});
+  }
+
+  on(url, cb) {
+    server.on(url, [cb]()
+    {
+		try {
+			return cb();
+		}
+		catch(e) {
+			return "";
+		}
+    });
+  }
+
+	on_json(url, cb)
+	{
+		server.post_json(url, [this, cb](post_data)
+		{
+			try {
+				return cb(post_data);
+			}
+			catch(e) {
+				return "";
+			}
+		});
+	}
+
+	on_post(url, cb)
+	{
+		server.post(url, [this, cb](post_data)
+		{
+			try {
+				return cb(post_data);
+			}
+			catch(e) {
+				return "";
+			}
+		});
+	}
+
+	render(src, args) {
+		if(!args)
+			return src;
+		for(i = 0; i < args.size(); i++) {
+			src = src.replace("{{"+args.key(i)+"}}", args[i]);
+		}
+		return src;
+	}
+
+	render_templ(alias, args)
+	{
+		try {
+			return render(&esp32.web_template(alias), &args);
+		}
+		catch(e) {
+			return "";
+		}
+	}
+}
+
+menu = web_menu();
+
+update_config_thread()
+{
+	for(1)
+	{
+		//This is to relax saving on update spam...
+		if(trigger_config_update)
+		{
+			trigger_config_update = 0;
+			sleep(500);
+			fileio.write_string("/config.json", esp32.config());
+			print(esp32.config());
+		}
+		if(trigger_segment_update) {
+			trigger_segment_update = 0;
+			fileio.write_json("segments.json", led_segments);
+		}
+		if(trigger_effect_update) {
+			trigger_effect_update = 0;
+			fileio.write_json("effects.json", effect_groups);
+		}
+		
+		sleep(100);
+	}
+}
+
+init_driver();
+update_segments();
+update_anims();
+init_driver();
+
+anim_thread = std.thread(update_anims_thread);
+anim_thread.run();
+
+config_thread = std.thread(update_config_thread);
+config_thread.run();
+
+server.start();

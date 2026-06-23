@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ESP32 File Browser + Code Editor (Dark)</title>
+  <style>
+    :root{
+      --bg:#0b0f14; --panel:#0f1419; --muted:#9aa6b2;
+      --accent:#6ee7b7; --danger:#ff6b6b;
+      --radius:12px;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:#e6eef5;font-family:sans-serif}
+    .app{display:flex;height:100vh;overflow:hidden}
+
+    /* Sidebar floats above */
+    .side {
+      position:absolute;
+      top:0; left:0; bottom:0;
+      width:280px;
+      background:var(--panel);
+      border-radius:0 var(--radius) var(--radius) 0;
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+      transform:translateX(-100%);
+      transition:transform 0.3s ease;
+      z-index:20;
+    }
+    .side.open { transform:translateX(0); }
+
+    /* Toggle button floats with sidebar */
+    #toggleSidebar {
+      position:absolute;
+      top:16px;
+      left:0;
+      width:28px; height:28px;
+      background:var(--accent);
+      color:#021115;
+      border:none;
+      border-radius:0 var(--radius) var(--radius) 0;
+      cursor:pointer;
+      z-index:21;
+      font-weight:bold;
+    }
+    #toggleSidebar.hidden { left:-40px; } /* move out when sidebar closed */
+
+    .main{flex:1;display:flex;flex-direction:column}
+
+    .tree{flex:1;overflow:auto;margin-top:10px}
+    .node{padding:6px 8px;border-radius:6px;cursor:pointer;color:var(--muted)}
+    .node:hover{background:rgba(255,255,255,0.05)}
+    .node.selected{background:rgba(110,231,183,0.1);color:var(--accent)}
+
+    .editor-panel{flex:1;display:flex;flex-direction:column;background:var(--panel);border-radius:var(--radius)}
+    .editor-header{padding:8px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid rgba(255,255,255,0.05)}
+    .filename{margin-left: 30px;}
+	#editor{flex:1;min-height:0}
+    .status{padding:6px 12px;font-size:12px;color:var(--muted);border-top:1px solid rgba(255,255,255,0.05)}
+    button{background:#1a222c;border:none;color:#e6eef5;padding:6px 10px;border-radius:6px;cursor:pointer}
+    button.primary{background:linear-gradient(90deg,var(--accent),#5bd6ff);color:#021115}
+  </style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar toggle -->
+  <button id="toggleSidebar">&#9776;</button>
+
+  <!-- Sidebar overlay -->
+  <aside class="side" id="fileSidebar">
+    <div><button id="refreshBtn">Refresh</button> <button id="newBtn">New</button> <button id="uploadBtn">Upload</button></div>
+    <div class="tree" id="fileTree"></div>
+    <div><button id="deleteBtn">Delete</button> <button id="downloadBtn">Download</button></div>
+  </aside>
+
+  <!-- Main editor -->
+  <main class="main">
+    <div class="editor-panel">
+      <div class="editor-header">
+        <div id="filename">(no file)</div>
+        <div style="flex:1"></div>
+        <button id="saveBtn" class="primary">Save</button>
+      </div>
+      <div id="editor">Select a file to edit...</div>
+      <div class="status" id="statusMsg">Idle</div>
+    </div>
+  </main>
+</div>
+
+<!-- ACE Editor (place ace.js locally in /libs/ace.js) -->
+<script src="/libs/ace.js"></script>
+<script>
+const endpoints = {
+  list: '/fb/list',
+  file: '/fb/file',
+  save: '/fb/save',
+  delete: '/fb/delete',
+  upload: '/fb/upload'
+};
+
+let state = { selected:null, tree:[] };
+const els = {
+  fileTree: document.getElementById('fileTree'),
+  filename: document.getElementById('filename'),
+  statusMsg: document.getElementById('statusMsg')
+};
+
+// setup Ace
+const editor = ace.edit("editor");
+editor.setTheme("ace/theme/monokai");
+editor.session.setMode("ace/mode/c_cpp");
+editor.setOptions({
+  fontFamily: "monospace",
+  fontSize: "14px",
+  showPrintMargin: false
+});
+
+function setStatus(s){ els.statusMsg.textContent = s; }
+
+// Helpers
+async function apiPostJSON(url,data){ 
+  const r=await fetch(url,{method:'POST',body:JSON.stringify(data)}); 
+  return r.json(); 
+}
+async function apiPostText(url,data){
+  const r=await fetch(url,{method:'POST',body:JSON.stringify(data)});
+  return r.text();
+}
+
+// Build tree from flat paths
+function buildTree(paths){
+  const root={children:{}};
+  paths.forEach(p=>{
+    const parts=p.split('/');
+    let cur=root;
+    parts.forEach((part,i)=>{
+      if(!cur.children[part]) cur.children[part]={children:{},path:parts.slice(0,i+1).join('/')};
+      cur=cur.children[part];
+    });
+  });
+  return root;
+}
+function renderTree(node=state.tree,container=els.fileTree){
+  container.innerHTML='';
+  Object.keys(node.children).forEach(name=>{
+    const child=node.children[name];
+    const el=document.createElement('div');
+    el.className='node';
+    el.textContent=name;
+    el.onclick=()=>openFile(child.path,el);
+    container.appendChild(el);
+    if(Object.keys(child.children).length){
+      const sub=document.createElement('div');
+      sub.style.marginLeft='16px';
+      container.appendChild(sub);
+      renderTree(child,sub);
+    }
+  });
+}
+
+// API calls
+async function refresh(){
+  try{ 
+    const files=await apiPostJSON(endpoints.list,{});
+    state.tree=buildTree(files);
+    renderTree(state.tree);
+    setStatus('File list loaded');
+  }catch(e){ setStatus('Error loading files'); }
+}
+
+async function openFile(path,node){
+  try{
+    const content=await apiPostText(endpoints.file,{path});
+    state.selected=path;
+    editor.setValue(content,-1);
+    els.filename.textContent=path.split('/').pop();
+    document.querySelectorAll('.node').forEach(n=>n.classList.remove('selected'));
+    node.classList.add('selected');
+    setStatus('Loaded '+path);
+  }catch(e){ setStatus('Failed to load file'); }
+}
+
+async function saveFile(){
+  if(!state.selected){ setStatus('No file'); return; }
+  try{
+    await fetch(endpoints.save,{method:'POST',body:JSON.stringify({path:state.selected,content:editor.getValue()})});
+    setStatus('Saved '+state.selected);
+  }catch(e){ setStatus('Save failed'); }
+}
+
+async function deleteFile(){
+  if(!state.selected) return;
+  if(!confirm('Delete '+state.selected+'?')) return;
+  await apiPostJSON(endpoints.delete,{path:state.selected});
+  refresh();
+  editor.setValue('',-1);
+  els.filename.textContent='(no file)';
+  setStatus('Deleted');
+}
+
+function downloadFile(){
+  if(!state.selected) return;
+  const a=document.createElement('a');
+  const blob=new Blob([editor.getValue()],{type:'text/plain'});
+  a.href=URL.createObjectURL(blob);
+  a.download=state.selected.split('/').pop();
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function newFile(){
+  const name=prompt('New file path','/newfile.txt');
+  if(!name) return;
+  fetch(endpoints.save,{method:'POST',body:JSON.stringify({path:name,content:""})}).then(()=>refresh());
+}
+
+function doUpload(){
+  const inp=document.createElement('input');
+  inp.type='file';
+  inp.onchange=async()=>{
+    const f=inp.files[0]; if(!f) return;
+    const fd=new FormData(); fd.append('file',f);
+    await fetch(endpoints.upload,{method:'POST',body:fd});
+    refresh();
+  };
+  inp.click();
+}
+
+// buttons
+document.getElementById('refreshBtn').onclick=refresh;
+document.getElementById('saveBtn').onclick=saveFile;
+document.getElementById('deleteBtn').onclick=deleteFile;
+document.getElementById('downloadBtn').onclick=downloadFile;
+document.getElementById('newBtn').onclick=newFile;
+document.getElementById('uploadBtn').onclick=doUpload;
+
+// Toggle sidebar
+const toggleBtn=document.getElementById('toggleSidebar');
+const sidebar=document.getElementById('fileSidebar');
+toggleBtn.addEventListener('click',()=>{
+  sidebar.classList.toggle('open');
+  //toggleBtn.classList.toggle('hidden',!sidebar.classList.contains('open'));
+});
+
+// Ctrl+S
+window.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey)&&e.key==='s'){ e.preventDefault(); saveFile(); } });
+
+refresh();
+</script>
+</body>
+</html>

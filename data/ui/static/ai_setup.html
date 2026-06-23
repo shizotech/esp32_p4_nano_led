@@ -1,0 +1,76 @@
+<button id="recordBtn" onclick="toggleRecording()">Start Recording</button>
+
+<script>
+let mediaRecorder;
+let audioChunks = [];
+let isRecording = false;
+
+async function toggleRecording() {
+  const btn = document.getElementById('recordBtn');
+
+  if (!isRecording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true
+        }
+      });
+
+      mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 24000 // 24 kbps
+      });
+
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        sendAudioToESP(blob);
+      };
+
+      mediaRecorder.start();
+      btn.textContent = "Stop Recording";
+      isRecording = true;
+
+      // Auto-stop after 5 seconds
+      setTimeout(() => {
+        if (isRecording) toggleRecording();
+      }, 5000);
+
+    } catch (err) {
+      console.error("Mic access error:", err);
+      alert("Microphone access denied.");
+    }
+
+  } else {
+    mediaRecorder.stop();
+    btn.textContent = "Start Recording";
+    isRecording = false;
+  }
+}
+
+function sendAudioToESP(blob) {
+  const formData = new FormData();
+  formData.append("audio", blob, "recording.webm");
+
+  fetch("/upload-audio", {
+    method: "POST",
+    body: formData
+  }).then(response => {
+    if (!response.ok) throw new Error("Upload failed");
+    return response.text();
+  }).then(result => {
+    console.log("ESP response:", result);
+  }).catch(err => {
+    console.error("Upload error:", err);
+    alert("Failed to send audio.");
+  });
+}
+</script>
