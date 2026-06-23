@@ -1,0 +1,30 @@
+
+
+net = shizonet.server();
+
+net.on_connect([](dev) {
+	
+	if(dev.type() == "artnet")
+		return;
+	
+	std.print(dev);
+	std.print(dev.name());
+	
+	if(dev.name() == "ESP32") {
+		std.print("Sending files...");	
+		data_files = fileio.files("data");
+
+		for(i = 0; i < data_files.size(); i++) {
+			dev.fetch("upload_file", [name=data_files[i], content=fileio.read_string("data/" + data_files[i])]);
+		}
+		//dev.fetch("upload_file", [name="boot.shio", content=fileio.read_string("firm.shio")]);
+		std.sleep(1000);
+		std.print("reboot...");
+		dev.fetch("reboot");
+		//dev.get("reboot");
+		std.print("OK");
+		std.exitprocess();
+	}
+});
+
+std.input();
