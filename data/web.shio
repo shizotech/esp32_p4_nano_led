@@ -76,7 +76,7 @@ get_leds_out_count()
 		for(j = 0; j < it.segments.size(); j++)
 		{
 			seg = &it.segments[j];
-			seg_count += seg.width * math.max(1,seg.count);
+			seg_count += seg.width * math.max(1,seg.height) * math.max(1,seg.count);
 			if(seg.testout)
 				has_solo_segments = 1;
 		}
@@ -140,8 +140,10 @@ update_segments()
 	}
 	
 	if(!driver)
+	{
 		print("driver was not initialized.");
 		return;
+	}
 	
 	last_max_leds = new_max_leds;
 	last_num_outputs = led_segments.size();
@@ -172,13 +174,14 @@ update_segments()
 			//led_segments_groups[seg.group][group_name].push_back() doesnt work as expected ???
 			//Debug that !!!
 			
-			for(k = 0; k < seg.count; k++)
+			//Each repetition of the segment starts ledcount LEDs after the previous one
+			for(k = 0; k < math.max(1,seg.count); k++)
 			{			
 				//Sort after group and total LED count (to avoid double rendering same segments)
 				group_name = string(ledcount);
 				entry = &group[group_name];
 				//std.print(led_segments_groups);
-				entry.push_back([output=output_id, index=current_index, count=ledcount]);
+				entry.push_back([output=output_id, index=current_index + k * ledcount, count=ledcount]);
 				//std.print(led_segments_groups);
 			}
 			
@@ -210,31 +213,33 @@ current_effect_transit = 0.0;
 update_anims()
 {
 	if(!driver)
+	{
 		std.print("driver was not initialized.");
 		return;
+	}
 
 	if(!effect_groups)
 		return;
 	
 	for(i = 0; i < effect_groups.size(); i++)
 	{
-		if(!effect_groups[i].intensity)
+		if(!effect_groups[i].has("intensity"))
 			effect_groups[i].intensity = 0.5;
 		effect_groups[i].intensity = std.float(effect_groups[i].intensity);
 		
-		if(!effect_groups[i].speed)
+		if(!effect_groups[i].has("speed"))
 			effect_groups[i].speed = 0.5;
 		effect_groups[i].speed = std.float(effect_groups[i].speed);
 		
-		if(!effect_groups[i].ctrl1)
+		if(!effect_groups[i].has("ctrl1"))
 			effect_groups[i].ctrl1 = 0.5;
 		effect_groups[i].ctrl1 = std.float(effect_groups[i].ctrl1);
 		
-		if(!effect_groups[i].ctrl2)
+		if(!effect_groups[i].has("ctrl2"))
 			effect_groups[i].ctrl2 = 0.5;
 		effect_groups[i].ctrl2 = std.float(effect_groups[i].ctrl2);
 		
-		if(!effect_groups[i].ctrl3)
+		if(!effect_groups[i].has("ctrl3"))
 			effect_groups[i].ctrl3 = 0.5;
 		effect_groups[i].ctrl3 = std.float(effect_groups[i].ctrl3);
 		
@@ -244,6 +249,13 @@ update_anims()
 	if(!current_effect)
 		current_effect = effect_groups;
 	
+	//Groups created after boot have no transition state yet, start them at their target
+	for(i = 0; i < effect_groups.size(); i++)
+	{
+		if(!current_effect.has(effect_groups.key(i)))
+			current_effect[effect_groups.key(i)] = effect_groups[i];
+	}
+	
 	start_effect = current_effect;
 	
 	current_effect_transit = 0.0;
@@ -251,58 +263,71 @@ update_anims()
 
 update_anims_thread() {
 	for(1) {
-		if(current_effect_transit <= 1.0) {
+		if(driver && effect_groups && start_effect && current_effect_transit <= 1.0) {
 			try {
 				
 				for(i = 0; i < effect_groups.size(); i++)
 				{
-					driver.set_effect(effect_groups.key(i), effect_groups[i].effect);
+					//Transition state is stored per group name, not per position
+					key = effect_groups.key(i);
+					if(!start_effect.has(key))
+						continue;
+					if(!current_effect.has(key))
+						continue;
 					
-					old_col1 = get_color(start_effect[i].color1);
-					old_col2 = get_color(start_effect[i].color2);
+					target = &effect_groups[i];
+					start = &start_effect[key];
+					cur = &current_effect[key];
 					
-					new_col1 = get_color(effect_groups[i].color1);
-					new_col2 = get_color(effect_groups[i].color2);
+					driver.set_effect(key, target.effect);
+					
+					old_col1 = get_color(start.color1);
+					old_col2 = get_color(start.color2);
+					
+					new_col1 = get_color(target.color1);
+					new_col2 = get_color(target.color2);
 					
 					col1 = interpolate_color(&old_col1, &new_col1, current_effect_transit);
 					col2 = interpolate_color(&old_col2, &new_col2, current_effect_transit);
 
-					current_effect[i].color1 = col1;
-					current_effect[i].color2 = col2;
+					cur.color1 = col1;
+					cur.color2 = col2;
 
-					driver.set_effect_color1(effect_groups.key(i), col1.r, col1.b, col1.g);
-					driver.set_effect_color2(effect_groups.key(i), col2.r, col2.b, col2.g);
+					driver.set_effect_color1(key, col1.r, col1.g, col1.b);
+					driver.set_effect_color2(key, col2.r, col2.g, col2.b);
 					
-					//driver.set_effect_color1(effect_groups.key(i), new_col1.r, new_col1.b, new_col1.g);
-					//driver.set_effect_color2(effect_groups.key(i), new_col2.r, new_col2.b, new_col2.g);
+					//driver.set_effect_color1(key, new_col1.r, new_col1.g, new_col1.b);
+					//driver.set_effect_color2(key, new_col2.r, new_col2.g, new_col2.b);
 					
 					
 					//std.print(col1);
 					
-					current_effect[i].intensity = math.lerp(start_effect[i].intensity, effect_groups[i].intensity, current_effect_transit);
-					current_effect[i].speed = math.lerp(start_effect[i].speed, effect_groups[i].speed, current_effect_transit);
-					current_effect[i].ctrl1 = math.lerp(start_effect[i].ctrl1, effect_groups[i].ctrl1, current_effect_transit);
-					current_effect[i].ctrl2 = math.lerp(start_effect[i].ctrl2, effect_groups[i].ctrl2, current_effect_transit);
-					current_effect[i].ctrl3 = math.lerp(start_effect[i].ctrl3, effect_groups[i].ctrl3, current_effect_transit);
+					cur.intensity = math.lerp(start.intensity, target.intensity, current_effect_transit);
+					cur.speed = math.lerp(start.speed, target.speed, current_effect_transit);
+					cur.ctrl1 = math.lerp(start.ctrl1, target.ctrl1, current_effect_transit);
+					cur.ctrl2 = math.lerp(start.ctrl2, target.ctrl2, current_effect_transit);
+					cur.ctrl3 = math.lerp(start.ctrl3, target.ctrl3, current_effect_transit);
 								
-					//std.print(current_effect[i].intensity);			
+					//std.print(cur.intensity);			
 							
-					driver.set_effect_intensity(effect_groups.key(i), current_effect[i].intensity);
-					driver.set_effect_speed(effect_groups.key(i), current_effect[i].speed);
-					driver.set_effect_ctrl1(effect_groups.key(i), current_effect[i].ctrl1);	
-					driver.set_effect_ctrl2(effect_groups.key(i), current_effect[i].ctrl2);	
-					driver.set_effect_ctrl3(effect_groups.key(i), current_effect[i].ctrl3);		
+					driver.set_effect_intensity(key, cur.intensity);
+					driver.set_effect_speed(key, cur.speed);
+					driver.set_effect_ctrl1(key, cur.ctrl1);	
+					driver.set_effect_ctrl2(key, cur.ctrl2);	
+					driver.set_effect_ctrl3(key, cur.ctrl3);		
 					
 					/*
-					driver.set_effect_intensity(effect_groups.key(i), effect_groups[i].intensity);
-					driver.set_effect_speed(effect_groups.key(i), effect_groups[i].speed);
-					driver.set_effect_ctrl1(effect_groups.key(i), effect_groups[i].ctrl1);	
-					driver.set_effect_ctrl2(effect_groups.key(i), effect_groups[i].ctrl2);	
-					driver.set_effect_ctrl3(effect_groups.key(i), effect_groups[i].ctrl3);
+					driver.set_effect_intensity(key, target.intensity);
+					driver.set_effect_speed(key, target.speed);
+					driver.set_effect_ctrl1(key, target.ctrl1);	
+					driver.set_effect_ctrl2(key, target.ctrl2);	
+					driver.set_effect_ctrl3(key, target.ctrl3);
 					*/
 				}
 			}
-			catch(e) {}
+			catch(e) {
+				std.print("animation update failed: ", e);
+			}
 			
 			current_effect_transit += 0.01;
 			std.sleep(16);
@@ -365,8 +390,10 @@ class web_page
 			html += render_templ("section_end");
 		closed_last_section = 1;
 		if(!title.empty())
+		{
 			html += render_templ("section_start", [section_title = title, section_text=infotext]);
 			closed_last_section = 0;
+		}
 	}
 
   add_ctrl(type, name, cb, options)
@@ -399,7 +426,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -421,7 +448,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -443,7 +470,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -466,7 +493,7 @@ class web_page
   get_id(name)
   {
     id = name.lowercase();
-    id = id.removecharsexcept("abcdefghijklmnopqrstuvwqyz0123456789");
+    id = id.removecharsexcept("abcdefghijklmnopqrstuvwxyz0123456789");
     return id;
   }
 
@@ -482,8 +509,10 @@ class web_page
   render_templ(alias, args = 0)
   {
 	if(!templates.has(alias))
+	{
 		std.print("Cannot find: ", alias);
 		return "";
+	}
 	  
     return render(&templates[alias], &args);
   }
@@ -620,7 +649,10 @@ class web_menu
 	
 	on_json("/effects_get", [this](post_data)
 	{	
-		return [effects=driver.get_effects(),
+		effects = [];
+		if(driver)
+			effects = driver.get_effects();
+		return [effects=effects,
 				palettes = [
 					[name="Warm",id="builtin_warm"],
 					[name="Cool",id="builtin_cool"],
@@ -633,9 +665,10 @@ class web_menu
 	on_post("/animations_update", [this](post_data)
 	{	
 		std.print("Animation update...");
-		effect_groups = std.json(post_data.plain);
-		if(!effect_groups)
+		new_effect_groups = std.json(post_data.plain);
+		if(!new_effect_groups)
 			return "";
+		effect_groups = new_effect_groups;
 		update_anims();
 		trigger_effect_update = true;
 		std.print("OK");
@@ -728,10 +761,9 @@ update_config_thread()
 	}
 }
 
-init_driver();
+//update_segments() initializes the driver when needed
 update_segments();
 update_anims();
-init_driver();
 
 anim_thread = std.thread(update_anims_thread);
 anim_thread.run();

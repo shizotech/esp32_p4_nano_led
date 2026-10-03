@@ -118,12 +118,18 @@ editor.setOptions({
 function setStatus(s){ els.statusMsg.textContent = s; }
 
 // Helpers
+// Throws on HTTP errors, so callers never report success for a failed request
+async function apiPost(url,body){
+  const r=await fetch(url,{method:'POST',body});
+  if(!r.ok) throw new Error(url+' failed: HTTP '+r.status);
+  return r;
+}
 async function apiPostJSON(url,data){ 
-  const r=await fetch(url,{method:'POST',body:JSON.stringify(data)}); 
+  const r=await apiPost(url,JSON.stringify(data)); 
   return r.json(); 
 }
 async function apiPostText(url,data){
-  const r=await fetch(url,{method:'POST',body:JSON.stringify(data)});
+  const r=await apiPost(url,JSON.stringify(data));
   return r.text();
 }
 
@@ -183,7 +189,7 @@ async function openFile(path,node){
 async function saveFile(){
   if(!state.selected){ setStatus('No file'); return; }
   try{
-    await fetch(endpoints.save,{method:'POST',body:JSON.stringify({path:state.selected,content:editor.getValue()})});
+    await apiPost(endpoints.save,JSON.stringify({path:state.selected,content:editor.getValue()}));
     setStatus('Saved '+state.selected);
   }catch(e){ setStatus('Save failed'); }
 }
@@ -191,7 +197,9 @@ async function saveFile(){
 async function deleteFile(){
   if(!state.selected) return;
   if(!confirm('Delete '+state.selected+'?')) return;
-  await apiPostJSON(endpoints.delete,{path:state.selected});
+  try{
+    await apiPost(endpoints.delete,JSON.stringify({path:state.selected}));
+  }catch(e){ setStatus('Delete failed'); return; }
   refresh();
   editor.setValue('',-1);
   els.filename.textContent='(no file)';
@@ -211,7 +219,9 @@ function downloadFile(){
 function newFile(){
   const name=prompt('New file path','/newfile.txt');
   if(!name) return;
-  fetch(endpoints.save,{method:'POST',body:JSON.stringify({path:name,content:""})}).then(()=>refresh());
+  apiPost(endpoints.save,JSON.stringify({path:name,content:""}))
+    .then(()=>refresh())
+    .catch(()=>setStatus('Creating '+name+' failed'));
 }
 
 function doUpload(){
@@ -220,7 +230,9 @@ function doUpload(){
   inp.onchange=async()=>{
     const f=inp.files[0]; if(!f) return;
     const fd=new FormData(); fd.append('file',f);
-    await fetch(endpoints.upload,{method:'POST',body:fd});
+    try{
+      await apiPost(endpoints.upload,fd);
+    }catch(e){ setStatus('Upload failed'); return; }
     refresh();
   };
   inp.click();

@@ -193,9 +193,7 @@ init_fx()
 		
 		driver.fx_clear(vec3f(0,0,0));
 		
-		print(mic.peak_bin((num_bins-1) * seg.ctrl1));
-		
-		max_pixels = 100;
+		max_pixels = seg.count;
 		
 		for(i = 0; i < max_pixels; i++)
 		{
@@ -263,6 +261,8 @@ init_fx()
 		chase_width = seg.ctrl1 * seg.count;
 		
 		pos = perc * (seg.count - chase_width);
+		
+		color1 = color1 * seg.intensity;
 		
 		driver.fx_pixels(pos, chase_width, color1 /** mic.peak()*/);
 		//print(mic.peak());
