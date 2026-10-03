@@ -274,11 +274,11 @@ update_anims_thread() {
 					current_effect[i].color1 = col1;
 					current_effect[i].color2 = col2;
 
-					driver.set_effect_color1(effect_groups.key(i), col1.r, col1.b, col1.g);
-					driver.set_effect_color2(effect_groups.key(i), col2.r, col2.b, col2.g);
+					driver.set_effect_color1(effect_groups.key(i), col1.r, col1.g, col1.b);
+					driver.set_effect_color2(effect_groups.key(i), col2.r, col2.g, col2.b);
 					
-					//driver.set_effect_color1(effect_groups.key(i), new_col1.r, new_col1.b, new_col1.g);
-					//driver.set_effect_color2(effect_groups.key(i), new_col2.r, new_col2.b, new_col2.g);
+					//driver.set_effect_color1(effect_groups.key(i), new_col1.r, new_col1.g, new_col1.b);
+					//driver.set_effect_color2(effect_groups.key(i), new_col2.r, new_col2.g, new_col2.b);
 					
 					
 					//std.print(col1);
