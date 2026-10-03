@@ -246,7 +246,11 @@ function buildAnimationUI(groups, effect_list) {
   });
 
   attachAnimationListeners();
-  sendAnimationsToESP();
+
+  // Only write back on load when the stored settings do not match the current groups
+  const saved = effect_list.settings || {};
+  const groupsChanged = groups.some(g => !saved[g]) || Object.keys(saved).some(g => !groups.includes(g));
+  if (groupsChanged) sendAnimationsToESP();
 }
 
 function attachAnimationListeners() {

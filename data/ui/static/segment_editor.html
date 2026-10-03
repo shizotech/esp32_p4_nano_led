@@ -231,8 +231,9 @@ function initOutputs() {
     })
     .catch(err => {
       console.error("Error fetching segments from ESP:", err);
-      outputs = [];
-      renderOutputs(false);
+      // Do not render an empty editor: any edit would overwrite the device config with it
+      document.getElementById("outputs").textContent =
+        "Could not load the LED setup from the device. Please reload the page.";
     });
 }
 
@@ -340,13 +341,12 @@ let sending = false;
 let sendPending = false;
 
 function sendToESP() {
-  
+  renderArtnetMap();
+
   if (sending) {
     sendPending = true; // mark that we need to send again
     return;
   }
-  
-  renderArtnetMap();
 
   sending = true;
   fetch('/segments_update', { // replace with your ESP endpoint
@@ -375,7 +375,9 @@ function attachChangeHandler(input, callback) {
   input.addEventListener(eventType, callback);
 }
 
-function renderOutputs() {
+function renderOutputs(send = true) {
+  if (!send) renderArtnetMap(); // sendToESP() renders it otherwise
+
   const outputsDiv = document.getElementById("outputs");
   outputsDiv.innerHTML = "";
   outputs.forEach((output, oi) => {
@@ -474,8 +476,7 @@ function renderOutputs() {
     outputsDiv.appendChild(outputDiv);
   });
 
-  sendToESP();
-  console.log("Update!");
+  if (send) sendToESP();
 }
 
 function saveConfig() {
@@ -501,8 +502,7 @@ function loadConfig(event) {
       const data = JSON.parse(e.target.result);
       if (Array.isArray(data)) {
         outputs = data;
-        renderOutputs();   // rebuild UI
-        sendToESP();       // send updated config to ESP
+        renderOutputs();   // rebuild UI and send updated config to ESP
       } else {
         alert("Invalid config format!");
       }
