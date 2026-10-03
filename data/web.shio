@@ -761,10 +761,9 @@ update_config_thread()
 	}
 }
 
-init_driver();
+//update_segments() initializes the driver when needed
 update_segments();
 update_anims();
-init_driver();
 
 anim_thread = std.thread(update_anims_thread);
 anim_thread.run();
