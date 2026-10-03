@@ -76,7 +76,7 @@ get_leds_out_count()
 		for(j = 0; j < it.segments.size(); j++)
 		{
 			seg = &it.segments[j];
-			seg_count += seg.width * math.max(1,seg.count);
+			seg_count += seg.width * math.max(1,seg.height) * math.max(1,seg.count);
 			if(seg.testout)
 				has_solo_segments = 1;
 		}
