@@ -128,7 +128,7 @@ class web_page
   get_id(name)
   {
     id = name.lowercase();
-    id = id.removecharsexcept("abcdefghijklmnopqrstuvwqyz0123456789");
+    id = id.removecharsexcept("abcdefghijklmnopqrstuvwxyz0123456789");
     return id;
   }
 
@@ -274,10 +274,11 @@ update_config_thread()
 		//This is to relax saving on update spam...
 		if(config_update)
 		{
+			//Reset first, so changes made while saving trigger another save
+			config_update = 0;
 			sleep(500);
 			fileio.write_string("/config.json", esp32.config());
 			print(esp32.config());
-			config_update = 0;
 		}
 		sleep(100);
 	}

@@ -426,7 +426,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -448,7 +448,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -470,7 +470,7 @@ class web_page
     cb2 = [id](post_data)
     {
       std.print("updating: " + id);
-      esp32.config()[id] = post_data.value;
+      esp32.set_config(id, post_data.value);
       trigger_config_update = 1;
     };
     
@@ -493,7 +493,7 @@ class web_page
   get_id(name)
   {
     id = name.lowercase();
-    id = id.removecharsexcept("abcdefghijklmnopqrstuvwqyz0123456789");
+    id = id.removecharsexcept("abcdefghijklmnopqrstuvwxyz0123456789");
     return id;
   }
 
