@@ -193,9 +193,7 @@ init_fx()
 		
 		driver.fx_clear(vec3f(0,0,0));
 		
-		print(mic.peak_bin((num_bins-1) * seg.ctrl1));
-		
-		max_pixels = 100;
+		max_pixels = seg.count;
 		
 		for(i = 0; i < max_pixels; i++)
 		{
