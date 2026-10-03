@@ -249,6 +249,13 @@ update_anims()
 	if(!current_effect)
 		current_effect = effect_groups;
 	
+	//Groups created after boot have no transition state yet, start them at their target
+	for(i = 0; i < effect_groups.size(); i++)
+	{
+		if(!current_effect.has(effect_groups.key(i)))
+			current_effect[effect_groups.key(i)] = effect_groups[i];
+	}
+	
 	start_effect = current_effect;
 	
 	current_effect_transit = 0.0;
@@ -261,53 +268,66 @@ update_anims_thread() {
 				
 				for(i = 0; i < effect_groups.size(); i++)
 				{
-					driver.set_effect(effect_groups.key(i), effect_groups[i].effect);
+					//Transition state is stored per group name, not per position
+					key = effect_groups.key(i);
+					if(!start_effect.has(key))
+						continue;
+					if(!current_effect.has(key))
+						continue;
 					
-					old_col1 = get_color(start_effect[i].color1);
-					old_col2 = get_color(start_effect[i].color2);
+					target = &effect_groups[i];
+					start = &start_effect[key];
+					cur = &current_effect[key];
 					
-					new_col1 = get_color(effect_groups[i].color1);
-					new_col2 = get_color(effect_groups[i].color2);
+					driver.set_effect(key, target.effect);
+					
+					old_col1 = get_color(start.color1);
+					old_col2 = get_color(start.color2);
+					
+					new_col1 = get_color(target.color1);
+					new_col2 = get_color(target.color2);
 					
 					col1 = interpolate_color(&old_col1, &new_col1, current_effect_transit);
 					col2 = interpolate_color(&old_col2, &new_col2, current_effect_transit);
 
-					current_effect[i].color1 = col1;
-					current_effect[i].color2 = col2;
+					cur.color1 = col1;
+					cur.color2 = col2;
 
-					driver.set_effect_color1(effect_groups.key(i), col1.r, col1.g, col1.b);
-					driver.set_effect_color2(effect_groups.key(i), col2.r, col2.g, col2.b);
+					driver.set_effect_color1(key, col1.r, col1.g, col1.b);
+					driver.set_effect_color2(key, col2.r, col2.g, col2.b);
 					
-					//driver.set_effect_color1(effect_groups.key(i), new_col1.r, new_col1.g, new_col1.b);
-					//driver.set_effect_color2(effect_groups.key(i), new_col2.r, new_col2.g, new_col2.b);
+					//driver.set_effect_color1(key, new_col1.r, new_col1.g, new_col1.b);
+					//driver.set_effect_color2(key, new_col2.r, new_col2.g, new_col2.b);
 					
 					
 					//std.print(col1);
 					
-					current_effect[i].intensity = math.lerp(start_effect[i].intensity, effect_groups[i].intensity, current_effect_transit);
-					current_effect[i].speed = math.lerp(start_effect[i].speed, effect_groups[i].speed, current_effect_transit);
-					current_effect[i].ctrl1 = math.lerp(start_effect[i].ctrl1, effect_groups[i].ctrl1, current_effect_transit);
-					current_effect[i].ctrl2 = math.lerp(start_effect[i].ctrl2, effect_groups[i].ctrl2, current_effect_transit);
-					current_effect[i].ctrl3 = math.lerp(start_effect[i].ctrl3, effect_groups[i].ctrl3, current_effect_transit);
+					cur.intensity = math.lerp(start.intensity, target.intensity, current_effect_transit);
+					cur.speed = math.lerp(start.speed, target.speed, current_effect_transit);
+					cur.ctrl1 = math.lerp(start.ctrl1, target.ctrl1, current_effect_transit);
+					cur.ctrl2 = math.lerp(start.ctrl2, target.ctrl2, current_effect_transit);
+					cur.ctrl3 = math.lerp(start.ctrl3, target.ctrl3, current_effect_transit);
 								
-					//std.print(current_effect[i].intensity);			
+					//std.print(cur.intensity);			
 							
-					driver.set_effect_intensity(effect_groups.key(i), current_effect[i].intensity);
-					driver.set_effect_speed(effect_groups.key(i), current_effect[i].speed);
-					driver.set_effect_ctrl1(effect_groups.key(i), current_effect[i].ctrl1);	
-					driver.set_effect_ctrl2(effect_groups.key(i), current_effect[i].ctrl2);	
-					driver.set_effect_ctrl3(effect_groups.key(i), current_effect[i].ctrl3);		
+					driver.set_effect_intensity(key, cur.intensity);
+					driver.set_effect_speed(key, cur.speed);
+					driver.set_effect_ctrl1(key, cur.ctrl1);	
+					driver.set_effect_ctrl2(key, cur.ctrl2);	
+					driver.set_effect_ctrl3(key, cur.ctrl3);		
 					
 					/*
-					driver.set_effect_intensity(effect_groups.key(i), effect_groups[i].intensity);
-					driver.set_effect_speed(effect_groups.key(i), effect_groups[i].speed);
-					driver.set_effect_ctrl1(effect_groups.key(i), effect_groups[i].ctrl1);	
-					driver.set_effect_ctrl2(effect_groups.key(i), effect_groups[i].ctrl2);	
-					driver.set_effect_ctrl3(effect_groups.key(i), effect_groups[i].ctrl3);
+					driver.set_effect_intensity(key, target.intensity);
+					driver.set_effect_speed(key, target.speed);
+					driver.set_effect_ctrl1(key, target.ctrl1);	
+					driver.set_effect_ctrl2(key, target.ctrl2);	
+					driver.set_effect_ctrl3(key, target.ctrl3);
 					*/
 				}
 			}
-			catch(e) {}
+			catch(e) {
+				std.print("animation update failed: ", e);
+			}
 			
 			current_effect_transit += 0.01;
 			std.sleep(16);
