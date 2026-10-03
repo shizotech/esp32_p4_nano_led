@@ -642,9 +642,10 @@ class web_menu
 	on_post("/animations_update", [this](post_data)
 	{	
 		std.print("Animation update...");
-		effect_groups = std.json(post_data.plain);
-		if(!effect_groups)
+		new_effect_groups = std.json(post_data.plain);
+		if(!new_effect_groups)
 			return "";
+		effect_groups = new_effect_groups;
 		update_anims();
 		trigger_effect_update = true;
 		std.print("OK");
