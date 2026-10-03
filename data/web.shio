@@ -263,7 +263,7 @@ update_anims()
 
 update_anims_thread() {
 	for(1) {
-		if(driver && current_effect_transit <= 1.0) {
+		if(driver && effect_groups && start_effect && current_effect_transit <= 1.0) {
 			try {
 				
 				for(i = 0; i < effect_groups.size(); i++)
