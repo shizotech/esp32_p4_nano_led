@@ -156,6 +156,14 @@ function initOutputs() {
     })
     .then(data => {
       outputs = Array.isArray(data) ? data : [];
+      // Drop fields older versions of this page accidentally stored in segments.json
+      outputs.forEach(output => {
+        delete output.totalBytes;
+        delete output.segmentRanges;
+        delete output.universes;
+        output.segments = output.segments || [];
+        output.segments.forEach(seg => delete seg[""]);
+      });
       renderOutputs(false); // render without sending back immediately
     })
     .catch(err => {
@@ -177,21 +185,20 @@ function renderArtnetMap() {
     outputs.forEach((output, oi) => {
 	
 		let offset = 0;
-		output.totalBytes = 0;
 
-		// store segment ranges in bytes for visualization
-		output.segmentRanges = output.segments.map((seg,si) => {
-			const segBytes = seg.width * seg.height * seg.count * BYTES_PER_LED;
+		// segment ranges in bytes for visualization (kept local, so they are not sent to the ESP)
+		const segmentRanges = (output.segments || []).map((seg,si) => {
+			const segBytes = seg.width * Math.max(1, seg.height) * Math.max(1, seg.count) * BYTES_PER_LED;
 			const range = { start: offset, end: offset + segBytes - 1, name: seg.name, sid: si };
 			offset += segBytes;
 			return range;
 		});
 
-		output.totalBytes = offset;
-		output.universes = Math.floor(output.totalBytes / CHANNELS_PER_UNIVERSE)+1;
+		const totalBytes = offset;
+		const universes = Math.max(1, Math.ceil(totalBytes / CHANNELS_PER_UNIVERSE));
 		
 	
-        let remainingBytes = output.totalBytes;
+        let remainingBytes = totalBytes;
         let byteOffset = 0;
 
         while (remainingBytes > 0) {
@@ -202,7 +209,7 @@ function renderArtnetMap() {
             universeDiv.style.display = "flex";
             universeDiv.style.flexDirection = "row";
             universeDiv.style.position = "relative"; // for inner text
-            universeDiv.style.width = Math.floor(100.0 / output.universes - 1.0) + "%";
+            universeDiv.style.width = Math.floor(100.0 / universes - 1.0) + "%";
             universeDiv.style.height = "45px";
             universeDiv.style.border = "rgb(66 66 66) dashed 2px";
             universeDiv.title = `Output ${oi + 1}, Universe ${universeIndex}, Bytes ${bytesThisUniverse}`;
@@ -220,7 +227,7 @@ function renderArtnetMap() {
             universeDiv.appendChild(label);
 
             // Fill universe with segments
-            output.segmentRanges.forEach(seg => {
+            segmentRanges.forEach(seg => {
                 const segStart = seg.start;
                 const segEnd = seg.end;
                 const uniStart = byteOffset;
@@ -299,9 +306,33 @@ function sendToESP() {
 }
 
 
+// Sliders and color pickers update live; text and number fields only once the edit is
+// finished, so e.g. typing pin "21" never applies pin 2 or the driver re-inits per keystroke.
 function attachChangeHandler(input, callback) {
-  const eventType = (input.type === "checkbox" || input.type === "radio") ? "change" : "input";
+  const eventType = (input.type === "range" || input.type === "color") ? "input" : "change";
   input.addEventListener(eventType, callback);
+}
+
+// Returns undefined for an empty/invalid number, so it is not sent as null
+function readInput(input) {
+  if (input.type === "checkbox") return input.checked;
+  if (input.type === "number" || input.type === "range") {
+    const v = parseInt(input.value, 10);
+    return Number.isNaN(v) ? undefined : v;
+  }
+  return input.value;
+}
+
+// Binds every input with a data-key to that property of target
+function bindInputs(container, target) {
+  container.querySelectorAll("input[data-key]").forEach(input => {
+    attachChangeHandler(input, () => {
+      const value = readInput(input);
+      if (value === undefined) return;
+      target[input.dataset.key] = value;
+      sendToESP();
+    });
+  });
 }
 
 function renderOutputs(send = true) {
@@ -316,19 +347,18 @@ function renderOutputs(send = true) {
 	  <div class="output-header" style="display:flex; gap:1rem; align-items:center; margin-bottom:0.5rem;">
 		<label style="flex:1;">
 		  Name:
-		  <input type="text" value="${output.name}" 
-			oninput="outputs[${oi}].name=this.value">
+		  <input type="text" value="${output.name}" data-key="name">
 		</label>
 		<label style="width:100px;">
 		  Pin:
-		  <input type="number" min="0" value="${output.pin}" 
-			oninput="outputs[${oi}].pin=parseInt(this.value);sendToESP();">
+		  <input type="number" min="0" value="${output.pin}" data-key="pin">
 		</label>
 		<button class="delete-btn" onclick="deleteOutput(${oi})">✖</button>
 	  </div>
 	`;
+	bindInputs(outputDiv, output);
 	
-    output.segments.forEach((seg, si) => {
+    (output.segments || []).forEach((seg, si) => {
       const segCard = document.createElement("div");
       segCard.className = "segment-card";
       segCard.dataset.outputIndex = oi;
@@ -337,38 +367,25 @@ function renderOutputs(send = true) {
       segCard.innerHTML = `
         <div class="segment-header">
           <span class="drag-handle">☰</span>
-          <input type="text" value="${seg.name}" oninput="outputs[${oi}].segments[${si}].name=this.value">
+          <input type="text" value="${seg.name}" data-key="name">
           <button class="delete-btn" onclick="deleteSegment(${oi},${si})">✖</button>
         </div>
         <div class="segment-body">
           <div class="flags">
-            <label><input type="checkbox" ${seg.enabled ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].enabled=this.checked">Enabled</label>
-            <label><input type="checkbox" ${seg.reverse ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].reverse=this.checked">Reverse</label>
-            <label><input type="checkbox" ${seg.mirror ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].mirror=this.checked">Mirror</label>
-			<label><input type="checkbox" ${seg.testout ? "checked" : ""} onchange="outputs[${oi}].segments[${si}].testout=this.checked">Test Output</label>
+            <label><input type="checkbox" ${seg.enabled ? "checked" : ""} data-key="enabled">Enabled</label>
+            <label><input type="checkbox" ${seg.reverse ? "checked" : ""} data-key="reverse">Reverse</label>
+            <label><input type="checkbox" ${seg.mirror ? "checked" : ""} data-key="mirror">Mirror</label>
+			<label><input type="checkbox" ${seg.testout ? "checked" : ""} data-key="testout">Test Output</label>
           </div>
-          <label>Width: <input type="number" value="${seg.width}" min="1" oninput="outputs[${oi}].segments[${si}].width=parseInt(this.value)"></label>
-          <label>Height: <input type="number" value="${seg.height}" min="1" oninput="outputs[${oi}].segments[${si}].height=parseInt(this.value)"></label>         
-		  <label>Count: <input type="number" value="${seg.count}" min="1" oninput="outputs[${oi}].segments[${si}].count=parseInt(this.value)"></label>
-          <label>Brightness: <input type="range" min="0" max="255" value="${seg.brightness}" oninput="outputs[${oi}].segments[${si}].brightness=parseInt(this.value)"></label>
-          <label>Color: <input type="color" value="${seg.color}" oninput="outputs[${oi}].segments[${si}].color=this.value"></label>
-		  <label>Group: <input type="text" value="${seg.group}" oninput="outputs[${oi}].segments[${si}].group=this.value"></label>
+          <label>Width: <input type="number" value="${seg.width}" min="1" data-key="width"></label>
+          <label>Height: <input type="number" value="${seg.height}" min="1" data-key="height"></label>         
+		  <label>Count: <input type="number" value="${seg.count}" min="1" data-key="count"></label>
+          <label>Brightness: <input type="range" min="0" max="255" value="${seg.brightness}" data-key="brightness"></label>
+          <label>Color: <input type="color" value="${seg.color}" data-key="color"></label>
+		  <label>Group: <input type="text" value="${seg.group}" data-key="group"></label>
         </div>
       `;
-
-		segCard.querySelectorAll("input").forEach(input => {
-		  attachChangeHandler(input, () => {
-			const key = input.name; // must match the property in outputs[oi].segments[si]
-			if (input.type === "checkbox") {
-			  outputs[oi].segments[si][key] = input.checked;
-			} else if (input.type === "number") {
-			  outputs[oi].segments[si][key] = parseInt(input.value);
-			} else {
-			  outputs[oi].segments[si][key] = input.value;
-			}
-			sendToESP();
-		  });
-		});
+      bindInputs(segCard, seg);
 
       // The card is only draggable while the handle is pressed, so the inputs stay usable.
       // (dragstart's target is the card itself, so checking for the handle there never matches.)
