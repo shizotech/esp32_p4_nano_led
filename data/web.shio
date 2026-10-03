@@ -174,13 +174,14 @@ update_segments()
 			//led_segments_groups[seg.group][group_name].push_back() doesnt work as expected ???
 			//Debug that !!!
 			
-			for(k = 0; k < seg.count; k++)
+			//Each repetition of the segment starts ledcount LEDs after the previous one
+			for(k = 0; k < math.max(1,seg.count); k++)
 			{			
 				//Sort after group and total LED count (to avoid double rendering same segments)
 				group_name = string(ledcount);
 				entry = &group[group_name];
 				//std.print(led_segments_groups);
-				entry.push_back([output=output_id, index=current_index, count=ledcount]);
+				entry.push_back([output=output_id, index=current_index + k * ledcount, count=ledcount]);
 				//std.print(led_segments_groups);
 			}
 			
