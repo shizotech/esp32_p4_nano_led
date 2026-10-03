@@ -101,77 +101,6 @@ const BYTES_PER_LED = 3;           // RGB
 
 let outputs = [];
 
-/* Call this right after you create each segCard in renderOutputs() */
-function wireDrag(segCard, oi, si) {
-  const handle = segCard.querySelector('.drag-handle');
-
-  // Arm-only-on-handle: card is NOT draggable unless the handle was pressed
-  const arm = () => {
-    segCard.setAttribute('draggable', 'true');
-    segCard.dataset.dragArmed = '1';
-  };
-  const disarm = () => {
-    segCard.removeAttribute('draggable');
-    delete segCard.dataset.dragArmed;
-  };
-
-  handle.addEventListener('pointerdown', (e) => {
-    arm();
-    // avoid selecting text when starting a drag
-    e.preventDefault();
-  });
-
-  // If user taps without actually dragging, clean up
-  document.addEventListener('pointerup', disarm, { passive: true });
-
-  segCard.addEventListener('dragstart', (e) => {
-    // If not armed by handle, cancel
-    if (!segCard.dataset.dragArmed) {
-      e.preventDefault();
-      return;
-    }
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', JSON.stringify({ oi, si }));
-    segCard.classList.add('dragging');
-  });
-
-  segCard.addEventListener('dragend', () => {
-    segCard.classList.remove('dragging');
-    disarm();
-  });
-
-  // Allow dropping on any segment card in the same output
-  segCard.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  });
-
-  segCard.addEventListener('drop', (e) => {
-    e.preventDefault();
-    const data = JSON.parse(e.dataTransfer.getData('text/plain') || '{}');
-    if (data.oi !== oi) return; // only within same output
-
-    const from = data.si;
-    const toCard = segCard;
-    const to = parseInt(toCard.dataset.segmentIndex, 10);
-
-    if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
-
-    const segs = outputs[oi].segments;
-    const moved = segs.splice(from, 1)[0];
-
-    // Insert BEFORE the drop target (classic behavior).
-    // If moving down (from < to), the target index shifts left by 1 after removal.
-    let insertAt = to;
-    if (from < to) insertAt = to - 1;
-
-    segs.splice(insertAt, 0, moved);
-
-    renderOutputs(); // re-render to refresh dataset indices
-    // (your JSON POST stays wherever you already do it)
-  });
-}
-
 function addOutput() {
   outputs.push({
     name: "Output",
@@ -402,7 +331,6 @@ function renderOutputs(send = true) {
     output.segments.forEach((seg, si) => {
       const segCard = document.createElement("div");
       segCard.className = "segment-card";
-      segCard.draggable = true;
       segCard.dataset.outputIndex = oi;
       segCard.dataset.segmentIndex = si;
 
@@ -442,29 +370,36 @@ function renderOutputs(send = true) {
 		  });
 		});
 
+      // The card is only draggable while the handle is pressed, so the inputs stay usable.
+      // (dragstart's target is the card itself, so checking for the handle there never matches.)
       const dragHandle = segCard.querySelector(".drag-handle");
-      dragHandle.addEventListener("mousedown", () => {
+      dragHandle.addEventListener("pointerdown", () => {
         segCard.draggable = true;
       });
+      segCard.addEventListener("pointerup", () => {
+        segCard.draggable = false;
+      });
       segCard.addEventListener("dragstart", e => {
-		console.log(e.target.closest);
-		if (!e.target.closest('.drag-handle')) {
-			e.preventDefault();
-			return;
-		  }
+        e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", JSON.stringify({ oi, si }));
+      });
+      segCard.addEventListener("dragend", () => {
+        segCard.draggable = false;
       });
       segCard.addEventListener("dragover", e => e.preventDefault());
       segCard.addEventListener("drop", e => {
         e.preventDefault();
-        const data = JSON.parse(e.dataTransfer.getData("text/plain"));
-        if (data.oi === oi) {
-          const moved = outputs[oi].segments.splice(data.si, 1)[0];
-          let dropIndex = si;
-          if (data.si < si) dropIndex++;
-          outputs[oi].segments.splice(dropIndex, 0, moved);
-          renderOutputs();
+        let data;
+        try {
+          data = JSON.parse(e.dataTransfer.getData("text/plain"));
+        } catch (err) {
+          return; // something other than a segment was dropped
         }
+        if (data.oi !== oi || data.si === si) return; // only within the same output
+        // Takes the target's place: lands before it when moving up, after it when moving down
+        const moved = outputs[oi].segments.splice(data.si, 1)[0];
+        outputs[oi].segments.splice(si, 0, moved);
+        renderOutputs();
       });
 
       outputDiv.appendChild(segCard);
