@@ -223,23 +223,23 @@ update_anims()
 	
 	for(i = 0; i < effect_groups.size(); i++)
 	{
-		if(!effect_groups[i].intensity)
+		if(!effect_groups[i].has("intensity"))
 			effect_groups[i].intensity = 0.5;
 		effect_groups[i].intensity = std.float(effect_groups[i].intensity);
 		
-		if(!effect_groups[i].speed)
+		if(!effect_groups[i].has("speed"))
 			effect_groups[i].speed = 0.5;
 		effect_groups[i].speed = std.float(effect_groups[i].speed);
 		
-		if(!effect_groups[i].ctrl1)
+		if(!effect_groups[i].has("ctrl1"))
 			effect_groups[i].ctrl1 = 0.5;
 		effect_groups[i].ctrl1 = std.float(effect_groups[i].ctrl1);
 		
-		if(!effect_groups[i].ctrl2)
+		if(!effect_groups[i].has("ctrl2"))
 			effect_groups[i].ctrl2 = 0.5;
 		effect_groups[i].ctrl2 = std.float(effect_groups[i].ctrl2);
 		
-		if(!effect_groups[i].ctrl3)
+		if(!effect_groups[i].has("ctrl3"))
 			effect_groups[i].ctrl3 = 0.5;
 		effect_groups[i].ctrl3 = std.float(effect_groups[i].ctrl3);
 		
