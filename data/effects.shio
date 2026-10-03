@@ -262,6 +262,8 @@ init_fx()
 		
 		pos = perc * (seg.count - chase_width);
 		
+		color1 = color1 * seg.intensity;
+		
 		driver.fx_pixels(pos, chase_width, color1 /** mic.peak()*/);
 		//print(mic.peak());
 		if (pos + chase_width > seg.count) {
