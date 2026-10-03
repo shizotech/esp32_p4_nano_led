@@ -263,7 +263,7 @@ update_anims()
 
 update_anims_thread() {
 	for(1) {
-		if(current_effect_transit <= 1.0) {
+		if(driver && current_effect_transit <= 1.0) {
 			try {
 				
 				for(i = 0; i < effect_groups.size(); i++)
@@ -649,7 +649,10 @@ class web_menu
 	
 	on_json("/effects_get", [this](post_data)
 	{	
-		return [effects=driver.get_effects(),
+		effects = [];
+		if(driver)
+			effects = driver.get_effects();
+		return [effects=effects,
 				palettes = [
 					[name="Warm",id="builtin_warm"],
 					[name="Cool",id="builtin_cool"],
