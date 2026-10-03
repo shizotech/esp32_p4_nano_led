@@ -140,8 +140,10 @@ update_segments()
 	}
 	
 	if(!driver)
+	{
 		print("driver was not initialized.");
 		return;
+	}
 	
 	last_max_leds = new_max_leds;
 	last_num_outputs = led_segments.size();
@@ -210,8 +212,10 @@ current_effect_transit = 0.0;
 update_anims()
 {
 	if(!driver)
+	{
 		std.print("driver was not initialized.");
 		return;
+	}
 
 	if(!effect_groups)
 		return;
@@ -365,8 +369,10 @@ class web_page
 			html += render_templ("section_end");
 		closed_last_section = 1;
 		if(!title.empty())
+		{
 			html += render_templ("section_start", [section_title = title, section_text=infotext]);
 			closed_last_section = 0;
+		}
 	}
 
   add_ctrl(type, name, cb, options)
@@ -482,8 +488,10 @@ class web_page
   render_templ(alias, args = 0)
   {
 	if(!templates.has(alias))
+	{
 		std.print("Cannot find: ", alias);
 		return "";
+	}
 	  
     return render(&templates[alias], &args);
   }
