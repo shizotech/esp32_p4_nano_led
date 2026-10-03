@@ -101,6 +101,13 @@ const BYTES_PER_LED = 3;           // RGB
 
 let outputs = [];
 
+// Escapes text for use inside HTML element content and attribute values
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
 function addOutput() {
   outputs.push({
     name: "Output",
@@ -347,11 +354,11 @@ function renderOutputs(send = true) {
 	  <div class="output-header" style="display:flex; gap:1rem; align-items:center; margin-bottom:0.5rem;">
 		<label style="flex:1;">
 		  Name:
-		  <input type="text" value="${output.name}" data-key="name">
+		  <input type="text" value="${escapeHtml(output.name)}" data-key="name">
 		</label>
 		<label style="width:100px;">
 		  Pin:
-		  <input type="number" min="0" value="${output.pin}" data-key="pin">
+		  <input type="number" min="0" value="${escapeHtml(output.pin)}" data-key="pin">
 		</label>
 		<button class="delete-btn" onclick="deleteOutput(${oi})">✖</button>
 	  </div>
@@ -367,7 +374,7 @@ function renderOutputs(send = true) {
       segCard.innerHTML = `
         <div class="segment-header">
           <span class="drag-handle">☰</span>
-          <input type="text" value="${seg.name}" data-key="name">
+          <input type="text" value="${escapeHtml(seg.name)}" data-key="name">
           <button class="delete-btn" onclick="deleteSegment(${oi},${si})">✖</button>
         </div>
         <div class="segment-body">
@@ -377,12 +384,12 @@ function renderOutputs(send = true) {
             <label><input type="checkbox" ${seg.mirror ? "checked" : ""} data-key="mirror">Mirror</label>
 			<label><input type="checkbox" ${seg.testout ? "checked" : ""} data-key="testout">Test Output</label>
           </div>
-          <label>Width: <input type="number" value="${seg.width}" min="1" data-key="width"></label>
-          <label>Height: <input type="number" value="${seg.height}" min="1" data-key="height"></label>         
-		  <label>Count: <input type="number" value="${seg.count}" min="1" data-key="count"></label>
-          <label>Brightness: <input type="range" min="0" max="255" value="${seg.brightness}" data-key="brightness"></label>
-          <label>Color: <input type="color" value="${seg.color}" data-key="color"></label>
-		  <label>Group: <input type="text" value="${seg.group}" data-key="group"></label>
+          <label>Width: <input type="number" value="${escapeHtml(seg.width)}" min="1" data-key="width"></label>
+          <label>Height: <input type="number" value="${escapeHtml(seg.height)}" min="1" data-key="height"></label>         
+		  <label>Count: <input type="number" value="${escapeHtml(seg.count)}" min="1" data-key="count"></label>
+          <label>Brightness: <input type="range" min="0" max="255" value="${escapeHtml(seg.brightness)}" data-key="brightness"></label>
+          <label>Color: <input type="color" value="${escapeHtml(seg.color)}" data-key="color"></label>
+		  <label>Group: <input type="text" value="${escapeHtml(seg.group)}" data-key="group"></label>
         </div>
       `;
       bindInputs(segCard, seg);
