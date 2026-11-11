@@ -1,6 +1,7 @@
 
 :root {
   --bg-dark: #111;
+  --bg-darker: #0a0a0a; /* esp32_p4_nano_led#23: was used but not defined */
   --neon-blue: #0ff;
   --neon-dim: #0cc;
   --input-bg: #1a1a1a;

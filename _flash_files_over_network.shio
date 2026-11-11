@@ -1,30 +1,89 @@
+//Uploads the script and web files of data/ to ONE ESP32 LED controller over shizonet, then reboots it.
+//
+//  shz flash.shio <device> [data_dir]
+//
+//  device:   name, MAC or IP of the device (shown in the header of its web interface).
+//            "ESP32" is the default name of every new device, so it is refused: pass the MAC or IP then.
+//  data_dir: folder to upload, default data/ next to this script.
+//
+//esp32_p4_nano_led#22: the old script took the first device named "ESP32", ignored the answers of upload_file
+//and rebooted anyway. Now every file must be confirmed (ok = 1: written completely on the device), otherwise
+//nothing is rebooted and the script exits with 1.
+//The same script is _microcontroller/esp_shizoscriptV3/_flash_files_over_network.shio: keep both the same.
 
+using std;
 
+if(std.argc() < 2)
+{
+	print("usage: shz flash.shio <device name | MAC | IP> [data_dir]");
+	std.exitprocess(1);
+}
+
+target = std.argv(1);
+data_dir = std.argc() > 2 ? std.argv(2) : fileio.file_dir(std.argv(0)) + "/data";
+upload_timeout_ms = 30000;
+
+if(target == "ESP32")
+{
+	print("\"ESP32\" is the default name of every new device. Pass its MAC or IP, or give it a name on its SETTINGS page first.");
+	std.exitprocess(1);
+}
+
+data_files = fileio.files(data_dir);
+if(!data_files)
+{
+	print("No files in " + data_dir);
+	std.exitprocess(1);
+}
+
+matches(dev)
+{
+	if(dev.name() == target)
+		return true;
+	if(string(dev.mac()).lowercase() == target.lowercase())
+		return true;
+	return dev.ip() == target;
+}
+
+busy = false;
 net = shizonet.server();
 
 net.on_connect([](dev) {
-	
+
 	if(dev.type() == "artnet")
 		return;
-	
-	std.print(dev);
-	std.print(dev.name());
-	
-	if(dev.name() == "ESP32") {
-		std.print("Sending files...");	
-		data_files = fileio.files("data");
+	if(busy || !matches(dev))
+		return;
+	busy = true;
 
-		for(i = 0; i < data_files.size(); i++) {
-			dev.fetch("upload_file", [name=data_files[i], content=fileio.read_string("data/" + data_files[i])]);
-		}
-		//dev.fetch("upload_file", [name="boot.shio", content=fileio.read_string("firm.shio")]);
-		std.sleep(1000);
-		std.print("reboot...");
-		dev.fetch("reboot");
-		//dev.get("reboot");
-		std.print("OK");
-		std.exitprocess();
+	print("Device: " + dev.name() + " [" + dev.mac() + "] (" + dev.ip() + ")");
+	print("Sending " + data_files.size() + " files from " + data_dir + " ...");
+
+	failed = [];
+	for(i = 0; i < data_files.size(); i++)
+	{
+		name = data_files[i];
+		r = dev.fetch("upload_file", [name=name, content=fileio.read_string(data_dir + "/" + name)], upload_timeout_ms);
+		ok = 0;
+		if(r)
+			ok = r.ok;
+		print((ok ? "  ok     " : "  FAILED ") + name);
+		if(!ok)
+			failed.push_back(name);
 	}
+
+	if(failed.size() != 0)
+	{
+		print(failed.size() + " file(s) were not written, the device is NOT rebooted: " + std.string(failed));
+		std.exitprocess(1);
+	}
+
+	print("reboot...");
+	//a request (get): the device registers "reboot" with add_command_respond, a plain send does not reach it
+	dev.get("reboot", 0, 5000);
+	print("OK");
+	std.exitprocess(0);
 });
 
+print("Waiting for " + target + " on the network (Ctrl+C to stop) ...");
 std.input();

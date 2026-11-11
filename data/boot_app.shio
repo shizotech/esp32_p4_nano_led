@@ -12,6 +12,17 @@ try {
 	std.print("OK.");
 }
 catch(e) {
-	std.print("ERROR.");
+	std.print("ERROR: web.shio could not be loaded: ", e);
+	//esp32_p4_nano_led#23: without web.shio there was no web interface at all. The recovery portal (boot.shio:
+	//network and WLAN settings) keeps the device reachable, so web.shio can be fixed over the network.
+	try {
+		print("Loading the recovery portal (boot.shio)...");
+		web_portal = std.module();
+		web_portal.load_file("boot.shio");
+		std.print("OK.");
+	}
+	catch(e2) {
+		std.print("ERROR: boot.shio could not be loaded either: ", e2);
+	}
 }
 
